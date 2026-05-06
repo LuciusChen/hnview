@@ -228,6 +228,19 @@
     (should (plist-get cookie :host-only))
     (should (> (plist-get cookie :expires-at) (hnview--unix-time)))))
 
+(ert-deftest hnview-cookie-jar-parser-handles-curl-cookie ()
+  "Curl cookie jar parsing should preserve HN cookie attributes."
+  (let ((cookie (hnview--parse-cookie-jar-line
+                 "#HttpOnly_news.ycombinator.com\tFALSE\t/\tTRUE\t0\tuser\tabc")))
+    (should (equal (plist-get cookie :host) "news.ycombinator.com"))
+    (should (equal (plist-get cookie :path) "/"))
+    (should (equal (plist-get cookie :name) "user"))
+    (should (equal (plist-get cookie :value) "abc"))
+    (should (plist-get cookie :secure))
+    (should (plist-get cookie :http-only))
+    (should (plist-get cookie :host-only))
+    (should-not (plist-get cookie :expires-at))))
+
 (ert-deftest hnview-plz-request-sends-and-stores-sqlite-cookies ()
   "plz requests should send stored cookies and store response cookies."
   (hnview-test-with-db
@@ -262,6 +275,39 @@
                       "; ")))
         (should (member "session=old" cookies))
         (should (member "user=abc" cookies))))))
+
+(ert-deftest hnview-plz-request-stores-curl-cookie-jar ()
+  "plz requests should persist cookies captured during redirects."
+  (hnview-test-with-db
+    (let ((result nil)
+          (error nil)
+          (cookie-jar nil))
+      (cl-letf (((symbol-function 'plz)
+                 (lambda (_method _url &rest args)
+                   (setq cookie-jar
+                         (cadr (member "--cookie-jar"
+                                       plz-curl-default-args)))
+                   (with-temp-file cookie-jar
+                     (insert "# Netscape HTTP Cookie File\n")
+                     (insert "#HttpOnly_news.ycombinator.com\tFALSE\t/\tTRUE\t0\tuser\tabc\n"))
+                   (funcall
+                    (plist-get args :then)
+                    'fake-response)))
+                ((symbol-function 'plz-response-body)
+                 (lambda (_response) "ok"))
+                ((symbol-function 'plz-response-headers)
+                 (lambda (_response) nil)))
+        (hnview--url-text
+         "https://news.ycombinator.com/login"
+         (lambda (err body)
+           (setq error err)
+           (setq result body))))
+      (should-not error)
+      (should (equal result "ok"))
+      (should (equal (hnview--cookie-header
+                      "https://news.ycombinator.com/item?id=1")
+                     "user=abc"))
+      (should-not (file-exists-p cookie-jar)))))
 
 (ert-deftest hnview-plz-error-message-explains-hn-rate-limit ()
   "HTTP 429 should be reported as an HN rate limit."
@@ -381,6 +427,11 @@
                "<a href=\"login\">login</a>"
                "alice")))
 
+(ert-deftest hnview-hn-error-message-detects-sorry-page ()
+  "HN's short Sorry page should be reported as request refusal."
+  (should (equal (hnview--hn-error-message "Sorry.")
+                 "HN refused this request, likely due to rate limiting; wait before trying again")))
+
 (ert-deftest hnview-submit-reply-posts-parsed-comment-form ()
   "Reply submission should fetch a reply form and post text through it."
   (let ((posted-url nil)
@@ -455,49 +506,66 @@
 
 (ert-deftest hnview-login-posts-auth-source-credentials ()
   "Login should submit HN credentials from explicit arguments."
-  (let ((posted-fields nil)
-        (hnview-username nil))
-    (cl-letf (((symbol-function 'hnview--post-form)
-               (lambda (_url fields callback)
-                 (setq posted-fields fields)
-                 (funcall callback nil
-                          "<a href=\"user?id=alice\">alice</a><a href=\"logout?auth=x\">logout</a>"))))
-      (hnview-login "alice" "secret"))
-    (should (equal hnview-username "alice"))
-    (should (equal (cdr (assoc "acct" posted-fields)) "alice"))
-    (should (equal (cdr (assoc "pw" posted-fields)) "secret"))))
+  (hnview-test-with-db
+    (let ((posted-fields nil)
+          (hnview-username nil))
+      (cl-letf (((symbol-function 'hnview--post-form)
+                 (lambda (_url fields callback)
+                   (setq posted-fields fields)
+                   (funcall callback nil
+                            "<a href=\"user?id=alice\">alice</a><a href=\"logout?auth=x\">logout</a>"))))
+        (hnview-login "alice" "secret"))
+      (should (equal hnview-username "alice"))
+      (should (equal (cdr (assoc "acct" posted-fields)) "alice"))
+      (should (equal (cdr (assoc "pw" posted-fields)) "secret"))
+      (should (equal (cdr (assoc "goto" posted-fields)) "news")))))
 
 (ert-deftest hnview-login-error-does-not-set-username ()
   "Failed login should not update the configured HN username."
-  (let ((hnview-username nil))
-    (cl-letf (((symbol-function 'hnview--post-form)
-               (lambda (_url _fields callback)
-                 (funcall callback "HN rate-limited this request" nil))))
-      (hnview-login "alice" "secret"))
-    (should-not hnview-username)))
+  (hnview-test-with-db
+    (let ((hnview-username nil))
+      (cl-letf (((symbol-function 'hnview--post-form)
+                 (lambda (_url _fields callback)
+                   (funcall callback "HN rate-limited this request" nil))))
+        (hnview-login "alice" "secret"))
+      (should-not hnview-username))))
+
+(ert-deftest hnview-login-succeeds-when-user-cookie-is-stored ()
+  "Login should succeed when HN sets a user cookie during redirects."
+  (hnview-test-with-db
+    (let ((hnview-username nil))
+      (cl-letf (((symbol-function 'hnview--post-form)
+                 (lambda (_url _fields callback)
+                   (hnview--upsert-cookie
+                    '(:host "news.ycombinator.com" :path "/" :name "user"
+                      :value "abc" :secure t :http-only t :host-only t))
+                   (funcall callback nil "<html></html>"))))
+        (hnview-login "alice" "secret"))
+      (should (equal hnview-username "alice")))))
 
 (ert-deftest hnview-login-uses-auth-source-credentials ()
   "Interactive login should read credentials from auth-source."
-  (let ((posted-fields nil)
-        (hnview-username nil))
-    (cl-letf (((symbol-function 'auth-source-search)
-               (lambda (&rest args)
-                 (should (equal (plist-get args :host)
-                                "news.ycombinator.com"))
-                 (list (list :user "alice"
-                             :secret (lambda () "secret")))))
-              ((symbol-function 'read-passwd)
-               (lambda (&rest _args)
-                 (error "read-passwd should not be called")))
-              ((symbol-function 'hnview--post-form)
-               (lambda (_url fields callback)
-                 (setq posted-fields fields)
-                 (funcall callback nil
-                          "<a href=\"user?id=alice\">alice</a><a href=\"logout?auth=x\">logout</a>"))))
-      (hnview-login))
-    (should (equal hnview-username "alice"))
-    (should (equal (cdr (assoc "acct" posted-fields)) "alice"))
-    (should (equal (cdr (assoc "pw" posted-fields)) "secret"))))
+  (hnview-test-with-db
+    (let ((posted-fields nil)
+          (hnview-username nil))
+      (cl-letf (((symbol-function 'auth-source-search)
+                 (lambda (&rest args)
+                   (should (equal (plist-get args :host)
+                                  "news.ycombinator.com"))
+                   (list (list :user "alice"
+                               :secret (lambda () "secret")))))
+                ((symbol-function 'read-passwd)
+                 (lambda (&rest _args)
+                   (error "read-passwd should not be called")))
+                ((symbol-function 'hnview--post-form)
+                 (lambda (_url fields callback)
+                   (setq posted-fields fields)
+                   (funcall callback nil
+                            "<a href=\"user?id=alice\">alice</a><a href=\"logout?auth=x\">logout</a>"))))
+        (hnview-login))
+      (should (equal hnview-username "alice"))
+      (should (equal (cdr (assoc "acct" posted-fields)) "alice"))
+      (should (equal (cdr (assoc "pw" posted-fields)) "secret")))))
 
 (ert-deftest hnview-auth-source-uses-configured-user-with-secret-only-entry ()
   "Configured user should pair with an auth-source secret-only entry."

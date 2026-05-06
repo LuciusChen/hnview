@@ -35,6 +35,7 @@
 (declare-function plz-response-headers "plz")
 (declare-function plz-response-status "plz")
 (declare-function eww "eww")
+(defvar plz-curl-default-args)
 
 (defgroup hnview nil
   "Modern Hacker News reader with translation."
@@ -531,6 +532,14 @@ original language in the current buffer."
          (plist-get cookie :path)
          (plist-get cookie :name))))
 
+(defun hnview--delete-cookies-by-host-name (host name)
+  "Delete cookies for HOST with NAME from SQLite."
+  (hnview--ensure-db)
+  (sqlite-execute
+   hnview--db
+   "DELETE FROM cookies WHERE host = ? AND name = ?"
+   (list host name)))
+
 (defun hnview--stored-cookies ()
   "Return persisted cookies as plists."
   (hnview--ensure-db)
@@ -649,21 +658,35 @@ request body."
   (let* ((post-p (eq method 'post))
          (body (when post-p
                  (hnview--encode-form-fields fields)))
+         (cookie-jar (make-temp-file "hnview-cookies"))
          (headers (hnview--request-headers
                    url
                    (when post-p
-                     '(("Content-Type" . "application/x-www-form-urlencoded"))))))
+                     '(("Content-Type" . "application/x-www-form-urlencoded")))))
+         (plz-curl-default-args
+          (append (if (boundp 'plz-curl-default-args)
+                      plz-curl-default-args
+                    nil)
+                  (list "--cookie-jar" cookie-jar))))
     (plz method url
       :headers headers
       :body body
       :as 'response
       :then (lambda (response)
-              (hnview--store-response-cookies url response)
-              (funcall callback nil (plz-response-body response)))
+              (unwind-protect
+                  (progn
+                    (hnview--store-response-cookies url response)
+                    (hnview--store-cookie-jar cookie-jar)
+                    (funcall callback nil (plz-response-body response)))
+                (hnview--delete-cookie-jar cookie-jar)))
       :else (lambda (error)
-              (when-let* ((response (plz-error-response error)))
-                (hnview--store-response-cookies url response))
-              (funcall callback (hnview--plz-error-message error) nil)))))
+              (unwind-protect
+                  (progn
+                    (when-let* ((response (plz-error-response error)))
+                      (hnview--store-response-cookies url response))
+                    (hnview--store-cookie-jar cookie-jar)
+                    (funcall callback (hnview--plz-error-message error) nil))
+                (hnview--delete-cookie-jar cookie-jar))))))
 
 (defun hnview--ensure-plz ()
   "Ensure `plz' is available."
@@ -704,6 +727,59 @@ request body."
       (if (hnview--expired-cookie-p cookie)
           (hnview--delete-cookie cookie)
         (hnview--upsert-cookie cookie)))))
+
+(defun hnview--store-cookie-jar (file)
+  "Store cookies from curl cookie jar FILE."
+  (when (and file (file-exists-p file))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (when-let* ((cookie (hnview--parse-cookie-jar-line
+                             (buffer-substring (line-beginning-position)
+                                               (line-end-position)))))
+          (if (hnview--expired-cookie-p cookie)
+              (hnview--delete-cookie cookie)
+            (hnview--upsert-cookie cookie)))
+        (forward-line 1)))))
+
+(defun hnview--delete-cookie-jar (file)
+  "Delete curl cookie jar FILE."
+  (when (and file (file-exists-p file))
+    (ignore-errors (delete-file file))))
+
+(defun hnview--parse-cookie-jar-line (line)
+  "Parse one Netscape cookie jar LINE into a cookie plist."
+  (let ((http-only nil))
+    (cond
+     ((string-prefix-p "#HttpOnly_" line)
+      (setq http-only t)
+      (setq line (string-remove-prefix "#HttpOnly_" line)))
+     ((or (string-empty-p line)
+          (string-prefix-p "#" line))
+      (setq line nil)))
+    (when line
+      (let* ((fields (split-string line "\t"))
+             (domain (nth 0 fields))
+             (tailmatch (nth 1 fields))
+             (path (nth 2 fields))
+             (secure (nth 3 fields))
+             (expires (nth 4 fields))
+             (name (nth 5 fields))
+             (value (nth 6 fields))
+             (host (string-remove-prefix "." (downcase (or domain ""))))
+             (expires-at (string-to-number (or expires "0"))))
+        (when (and (= (length fields) 7)
+                   (not (string-empty-p host))
+                   (not (string-empty-p (or name ""))))
+          (list :host host
+                :path (if (string-empty-p (or path "")) "/" path)
+                :name name
+                :value (or value "")
+                :secure (string= secure "TRUE")
+                :http-only http-only
+                :host-only (string= tailmatch "FALSE")
+                :expires-at (unless (zerop expires-at) expires-at)))))))
 
 (defun hnview--response-set-cookie-headers (response)
   "Return Set-Cookie header values from RESPONSE."
@@ -784,6 +860,16 @@ request body."
                                    (plist-get cookie :value)))))
     (unless (null pairs)
       (string-join pairs "; "))))
+
+(defun hnview--hn-user-cookie-p ()
+  "Return non-nil when a Hacker News user cookie is stored."
+  (cl-some
+   (lambda (cookie)
+     (and (string= (plist-get cookie :name) "user")
+          (not (string-empty-p (or (plist-get cookie :value) "")))
+          (hnview--cookie-matches-url-p
+           cookie "news.ycombinator.com" "/" t)))
+   (hnview--stored-cookies)))
 
 (defun hnview--cookie-matches-url-p (cookie host path secure)
   "Return non-nil when COOKIE should be sent to HOST PATH SECURE."
@@ -1279,7 +1365,10 @@ REMAINING is a mutable one-item list containing the fetch budget."
 
 (defun hnview--hn-error-message (html)
   "Return a user-facing Hacker News error from HTML, if one is obvious."
+  (setq html (or html ""))
   (cond
+   ((string= (string-trim html) "Sorry.")
+    "HN refused this request, likely due to rate limiting; wait before trying again")
    ((string-match-p "You have to be logged in" html)
     "HN login required; run M-x hnview-login")
    ((and (string-match-p "<b>Login</b>" html)
@@ -2290,20 +2379,22 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
     (unless (and user secret)
       (user-error
        "No HN credentials found in auth-source for news.ycombinator.com"))
-      (message "Logging in to Hacker News...")
-      (hnview--post-form
-       (hnview--hn-url "login")
-       `(("acct" . ,user) ("pw" . ,secret))
-       (lambda (error html)
-         (cond
-          (error (message "%s" error))
-          ((hnview--login-success-p html user)
-           (setq hnview-username user)
-           (message "Logged in to Hacker News as %s" user))
-          ((hnview--hn-error-message html)
-           (message "%s" (hnview--hn-error-message html)))
-          (t
-           (message "HN login did not complete")))))))
+    (hnview--delete-cookies-by-host-name "news.ycombinator.com" "user")
+    (message "Logging in to Hacker News...")
+    (hnview--post-form
+     (hnview--hn-url "login")
+     `(("acct" . ,user) ("pw" . ,secret) ("goto" . "news"))
+     (lambda (error html)
+       (cond
+        (error (message "%s" error))
+        ((or (hnview--login-success-p html user)
+             (hnview--hn-user-cookie-p))
+         (setq hnview-username user)
+         (message "Logged in to Hacker News as %s" user))
+        ((hnview--hn-error-message html)
+         (message "%s" (hnview--hn-error-message html)))
+        (t
+         (message "HN login did not complete")))))))
 
 ;;;###autoload
 (defun hnview-inbox (&optional username)
