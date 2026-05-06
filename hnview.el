@@ -241,6 +241,8 @@
 (defvar-local hnview--reply-parent nil)
 (defvar-local hnview--reply-source-buffer nil)
 (defvar-local hnview--reply-translated-p nil)
+(defvar-local hnview--translate-visible-active-p nil)
+(defvar-local hnview--translation-batch-generation 0)
 
 (defvar hnview-feed-mode-map
   (let ((map (make-sparse-keymap)))
@@ -2429,25 +2431,34 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
         (buffer (current-buffer)))
     (unless items
       (user-error "No visible items"))
-    (if (cl-some #'hnview--active-translation-p items)
+    (cl-incf hnview--translation-batch-generation)
+    (if (or hnview--translate-visible-active-p
+            (cl-some #'hnview--active-translation-p items))
         (progn
+          (setq-local hnview--translate-visible-active-p nil)
           (dolist (item items)
             (hnview--set-item-translation-hidden item t))
           (hnview--rerender-current-buffer state))
+      (setq-local hnview--translate-visible-active-p t)
       (dolist (item items)
         (hnview--set-item-translation-hidden item nil))
       (hnview--rerender-current-buffer state)
       (when-let* ((pending-items
                    (cl-remove-if-not #'hnview--needs-translation-p items)))
-        (hnview--translate-items pending-items buffer state)))))
+        (hnview--translate-items pending-items buffer state
+                                 hnview--translation-batch-generation)))))
 
-(defun hnview--translate-items (items buffer &optional point-state)
+(defun hnview--translate-items (items buffer &optional point-state generation)
   "Translate ITEMS for BUFFER without blocking the current command.
-When POINT-STATE is non-nil, use it while rerendering BUFFER."
+When POINT-STATE is non-nil, use it while rerendering BUFFER.
+When GENERATION is non-nil, stop scheduling items if that visible translation
+generation is no longer active."
   (let ((queue (copy-sequence items)))
     (cl-labels
         ((step ()
-           (when (and queue (buffer-live-p buffer))
+           (when (and queue
+                      (buffer-live-p buffer)
+                      (hnview--translation-batch-active-p buffer generation))
              (let ((item (pop queue)))
                (with-current-buffer buffer
                  (hnview--set-item-translation-hidden item nil))
@@ -2463,6 +2474,13 @@ When POINT-STATE is non-nil, use it while rerendering BUFFER."
              (when queue
                (run-at-time 0 nil #'step)))))
       (run-at-time 0 nil #'step))))
+
+(defun hnview--translation-batch-active-p (buffer generation)
+  "Return non-nil when BUFFER still accepts GENERATION work."
+  (or (null generation)
+      (with-current-buffer buffer
+        (and hnview--translate-visible-active-p
+             (= generation hnview--translation-batch-generation)))))
 
 (defun hnview--maybe-auto-translate (buffer)
   "Auto-translate BUFFER when enabled."

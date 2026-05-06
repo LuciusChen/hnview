@@ -775,6 +775,36 @@
         (funcall (pop scheduled))
         (should translated)))))
 
+(ert-deftest hnview-translate-visible-cancels-queued-work-when-hidden ()
+  "Second T should cancel queued visible translation work."
+  (let ((story '(:id 1 :type "story" :title "First"))
+        (hnview--translations (make-hash-table :test #'equal))
+        (hnview--state-loaded-p t)
+        scheduled
+        translated)
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_secs _repeat function &rest args)
+                 (push (lambda () (apply function args)) scheduled)
+                 'timer))
+              ((symbol-function 'hnview--translate-item)
+               (lambda (_item _callback)
+                 (setq translated t))))
+      (with-temp-buffer
+        (hnview-feed-mode)
+        (setq-local hnview--stories (list story))
+        (hnview--render-feed)
+        (goto-char (point-min))
+        (search-forward "First")
+        (hnview-translate-visible)
+        (should hnview--translate-visible-active-p)
+        (should scheduled)
+        (hnview-translate-visible)
+        (should-not hnview--translate-visible-active-p)
+        (should (hnview--translation-hidden-p story 'title))
+        (funcall (pop scheduled))
+        (should-not translated)
+        (should (hnview--translation-hidden-p story 'title))))))
+
 (ert-deftest hnview-toggle-comment-translation-preserves-body-position ()
   "Toggling comment translation should keep point in the comment body."
   (let* ((comment '(:id 1 :type "comment" :by "alice"
