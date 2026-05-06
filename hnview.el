@@ -612,7 +612,7 @@ original language in the current buffer."
 
 (defun hnview--profile-section-label (section)
   "Return display label for profile SECTION."
-  (or (cdr (alist-get section hnview--profile-sections))
+  (or (alist-get section hnview--profile-sections)
       (symbol-name section)))
 
 (defun hnview--url-json (url callback)

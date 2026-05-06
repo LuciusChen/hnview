@@ -96,6 +96,11 @@
   (should (eq (lookup-key hnview-profile-mode-map (kbd "t"))
               #'hnview-translate-at-point)))
 
+(ert-deftest hnview-profile-section-label-reads-simple-alist ()
+  "Profile section labels should read simple section pairs."
+  (should (equal (hnview--profile-section-label 'about) "About"))
+  (should (equal (hnview--profile-section-label 'unknown) "unknown")))
+
 (ert-deftest hnview-reply-mode-has-compose-keys ()
   "Reply buffers should expose translation and submission commands."
   (should (eq (lookup-key hnview-reply-mode-map (kbd "C-c C-t"))
