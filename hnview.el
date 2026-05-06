@@ -239,6 +239,16 @@ original language in the current buffer."
     (new . ("New" . "newstories"))
     (active . ("Active" . nil))))
 
+(defconst hnview--feed-sections
+  '((ask . ((top . ("Top" . (:api "askstories")))
+            (new . ("New" . (:web "asknew")))))
+    (show . ((top . ("Top" . (:api "showstories")))
+             (new . ("New" . (:web "shownew")))))
+    (best . ((stories . ("Stories" . (:api "beststories")))
+             (comments . ("Comments" . (:web "bestcomments")))))
+    (new . ((stories . ("Stories" . (:api "newstories")))
+            (comments . ("Comments" . (:web "newcomments")))))))
+
 (defconst hnview--profile-sections
   '((about . "About")
     (stories . "Stories")
@@ -257,6 +267,7 @@ original language in the current buffer."
 (defvar hnview--db nil)
 
 (defvar-local hnview--current-feed 'top)
+(defvar-local hnview--current-feed-section nil)
 (defvar-local hnview--stories nil)
 (defvar-local hnview--thread-root nil)
 (defvar-local hnview--loading-message nil)
@@ -279,13 +290,14 @@ original language in the current buffer."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "g") #'hnview-refresh)
     (define-key map (kbd "f") #'hnview-switch-feed)
+    (define-key map (kbd "s") #'hnview-switch-feed-section)
     (define-key map (kbd "1") #'hnview-top)
     (define-key map (kbd "2") #'hnview-ask)
     (define-key map (kbd "3") #'hnview-show)
     (define-key map (kbd "4") #'hnview-best)
     (define-key map (kbd "5") #'hnview-new)
     (define-key map (kbd "6") #'hnview-active)
-    (define-key map (kbd "RET") #'hnview-open-thread)
+    (define-key map (kbd "RET") #'hnview-open-item)
     (define-key map (kbd "o") #'hnview-open-url)
     (define-key map (kbd "e") #'hnview-open-url-eww)
     (define-key map (kbd "b") #'hnview-toggle-bookmark)
@@ -608,6 +620,38 @@ original language in the current buffer."
   "Return Hacker News API endpoint for FEED."
   (cdr (alist-get feed hnview--feeds)))
 
+(defun hnview--feed-sections (feed)
+  "Return sub-sections for FEED."
+  (alist-get feed hnview--feed-sections))
+
+(defun hnview--feed-default-section (feed)
+  "Return the default sub-section for FEED."
+  (caar (hnview--feed-sections feed)))
+
+(defun hnview--feed-section-label (feed section)
+  "Return display label for FEED SECTION."
+  (or (car (alist-get section (hnview--feed-sections feed)))
+      (symbol-name section)))
+
+(defun hnview--feed-source (feed section)
+  "Return source plist for FEED SECTION."
+  (if-let* ((sections (hnview--feed-sections feed)))
+      (or (cdr (alist-get (or section (hnview--feed-default-section feed))
+                          sections))
+          (user-error "Unknown section for %s: %s"
+                      (hnview--feed-label feed) section))
+    (list :api (hnview--feed-endpoint feed))))
+
+(defun hnview--feed-context-label (feed &optional section)
+  "Return display context label for FEED and optional SECTION."
+  (let ((label (hnview--feed-label feed)))
+    (if (hnview--feed-sections feed)
+        (format "%s:%s"
+                label
+                (hnview--feed-section-label
+                 feed (or section (hnview--feed-default-section feed))))
+      label)))
+
 (defun hnview--profile-section-label (section)
   "Return display label for profile SECTION."
   (or (alist-get section hnview--profile-sections)
@@ -920,19 +964,45 @@ request body."
              (file-name-directory path))
         "/")))
 
-(defun hnview--fetch-feed (feed limit callback)
-  "Fetch FEED with LIMIT stories, then call CALLBACK with ERROR and STORIES."
+(defun hnview--fetch-feed (feed section limit callback)
+  "Fetch FEED SECTION with LIMIT items, then call CALLBACK with ERROR and ITEMS."
   (if (eq feed 'active)
       (hnview--fetch-active-stories limit callback)
-    (let ((endpoint (hnview--feed-endpoint feed)))
-      (unless endpoint
-        (user-error "Unknown feed: %s" feed))
-      (hnview--url-json
-       (format "%s/%s.json" hnview--api-base endpoint)
-       (lambda (error ids)
-         (if error
-             (funcall callback error nil)
-           (hnview--fetch-items (hnview--take ids limit) callback)))))))
+    (let ((source (hnview--feed-source feed section)))
+      (cond
+       ((plist-get source :api)
+        (hnview--fetch-api-feed (plist-get source :api) limit callback))
+       ((plist-get source :web)
+        (hnview--fetch-web-feed (plist-get source :web) limit callback))
+       (t
+        (user-error "Unknown feed source for %s"
+                    (hnview--feed-context-label feed section)))))))
+
+(defun hnview--fetch-api-feed (endpoint limit callback)
+  "Fetch API ENDPOINT with LIMIT items, then call CALLBACK."
+  (unless endpoint
+    (user-error "Unknown API feed endpoint"))
+  (hnview--url-json
+   (format "%s/%s.json" hnview--api-base endpoint)
+   (lambda (error ids)
+     (if error
+         (funcall callback error nil)
+       (hnview--fetch-items (hnview--take ids limit) callback)))))
+
+(defun hnview--fetch-web-feed (path limit callback)
+  "Fetch HN web feed PATH with LIMIT items, then call CALLBACK."
+  (hnview--url-text
+   (hnview--hn-url path)
+   (lambda (error html)
+     (cond
+      (error
+       (funcall callback error nil))
+      ((hnview--hn-error-message html)
+       (funcall callback (hnview--hn-error-message html) nil))
+      (t
+       (hnview--fetch-items
+        (hnview--take (hnview--parse-hn-list-item-ids html) limit)
+        callback))))))
 
 (defun hnview--fetch-item (id callback)
   "Fetch Hacker News item ID, then call CALLBACK with ERROR and ITEM."
@@ -2020,8 +2090,18 @@ REMAINING is a mutable one-item list containing the fetch budget."
      (t
       (cl-loop for story in hnview--stories
                for index from 1
-               do (hnview--insert-story story index))))
+               do (hnview--insert-feed-item story index))))
     (goto-char (point-min))))
+
+(defun hnview--insert-feed-item (item index)
+  "Insert feed ITEM at INDEX."
+  (pcase (plist-get item :type)
+    ((or "story" "job" "poll")
+     (hnview--insert-story item index))
+    ("comment"
+     (hnview--insert-profile-comment item index))
+    (_
+     (hnview--insert-story item index))))
 
 (defun hnview--insert-story (story index)
   "Insert STORY at INDEX."
@@ -2539,30 +2619,34 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
   (hnview--profile-open-current-user-section 'hidden))
 
 ;;;###autoload
-(defun hnview-open-feed (feed)
-  "Open hnview FEED."
+(defun hnview-open-feed (feed &optional section)
+  "Open hnview FEED with optional SECTION."
   (interactive (list (hnview--read-feed)))
   (hnview--ensure-state-loaded)
-  (let ((buffer (get-buffer-create (format "*hnview: %s*"
-                                           (hnview--feed-label feed)))))
+  (let* ((section (or section (hnview--feed-default-section feed)))
+         (context (hnview--feed-context-label feed section))
+         (buffer (get-buffer-create (format "*hnview: %s*" context))))
     (switch-to-buffer buffer)
     (hnview-feed-mode)
     (setq-local hnview--current-feed feed)
-    (hnview--set-mode-name (hnview--feed-label feed))
-    (setq-local hnview--loading-message "Loading stories...")
+    (setq-local hnview--current-feed-section section)
+    (hnview--set-mode-name context)
+    (setq-local hnview--loading-message "Loading items...")
     (setq-local hnview--error-message nil)
     (setq-local hnview--stories nil)
     (hnview--render-feed)
     (hnview--fetch-feed
-     feed hnview-feed-limit
+     feed section hnview-feed-limit
      (lambda (error stories)
        (when (buffer-live-p buffer)
          (with-current-buffer buffer
-           (setq-local hnview--loading-message nil)
-           (setq-local hnview--error-message error)
-           (setq-local hnview--stories stories)
-           (hnview--render-feed)
-           (hnview--maybe-auto-translate buffer)))))))
+           (when (and (eq hnview--current-feed feed)
+                      (eq hnview--current-feed-section section))
+             (setq-local hnview--loading-message nil)
+             (setq-local hnview--error-message error)
+             (setq-local hnview--stories stories)
+             (hnview--render-feed)
+             (hnview--maybe-auto-translate buffer))))))))
 
 (defun hnview--read-feed ()
   "Read a Hacker News feed from the minibuffer."
@@ -2578,6 +2662,26 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
   "Switch the current hnview feed."
   (interactive)
   (hnview-open-feed (hnview--read-feed)))
+
+(defun hnview--read-feed-section ()
+  "Read a sub-section for the current hnview feed."
+  (let ((sections (hnview--feed-sections hnview--current-feed)))
+    (unless sections
+      (user-error "No sections for %s" (hnview--feed-label hnview--current-feed)))
+    (let* ((choices (mapcar (lambda (section)
+                              (cons (car (cdr section)) (car section)))
+                            sections))
+           (default (hnview--feed-section-label
+                     hnview--current-feed
+                     (or hnview--current-feed-section
+                         (hnview--feed-default-section hnview--current-feed))))
+           (choice (completing-read "Section: " choices nil t nil nil default)))
+      (cdr (assoc choice choices)))))
+
+(defun hnview-switch-feed-section ()
+  "Switch the current hnview feed sub-section."
+  (interactive)
+  (hnview-open-feed hnview--current-feed (hnview--read-feed-section)))
 
 ;;;###autoload
 (defun hnview-top ()
@@ -2620,7 +2724,7 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
   (interactive)
   (cond
    ((derived-mode-p 'hnview-feed-mode)
-    (hnview-open-feed hnview--current-feed))
+    (hnview-open-feed hnview--current-feed hnview--current-feed-section))
    ((derived-mode-p 'hnview-thread-mode)
     (let ((story hnview--thread-root)
           (limit hnview--thread-comment-limit))

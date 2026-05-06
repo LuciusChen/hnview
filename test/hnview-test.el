@@ -48,6 +48,10 @@
   "Feed buffers should switch feeds through key bindings."
   (should (eq (lookup-key hnview-feed-mode-map (kbd "f"))
               #'hnview-switch-feed))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "s"))
+              #'hnview-switch-feed-section))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "RET"))
+              #'hnview-open-item))
   (should (eq (lookup-key hnview-feed-mode-map (kbd "e"))
               #'hnview-open-url-eww))
   (should (eq (lookup-key hnview-feed-mode-map (kbd "r"))
@@ -59,6 +63,14 @@
   (should (eq (lookup-key hnview-feed-mode-map (kbd "6"))
               #'hnview-active))
   (should-not (lookup-key hnview-feed-mode-map (kbd "7"))))
+
+(ert-deftest hnview-feed-context-label-includes-section ()
+  "Feed labels should include sub-sections only when present."
+  (should (equal (hnview--feed-context-label 'top nil) "Top"))
+  (should (equal (hnview--feed-context-label 'ask 'top) "Ask:Top"))
+  (should (equal (hnview--feed-context-label 'ask 'new) "Ask:New"))
+  (should (equal (hnview--feed-context-label 'best 'comments)
+                 "Best:Comments")))
 
 (ert-deftest hnview-thread-mode-has-comment-loading-keys ()
   "Thread buffers should expose comment loading commands."
@@ -352,6 +364,49 @@
     (should (equal (hnview--hn-action-url "comment")
                    "https://news.ycombinator.com/comment"))))
 
+(ert-deftest hnview-fetch-feed-uses-api-section-source ()
+  "Feed API sections should use their configured Firebase endpoint."
+  (let (requested-url result-items result-error)
+    (cl-letf (((symbol-function 'hnview--url-json)
+               (lambda (url callback)
+                 (setq requested-url url)
+                 (funcall callback nil '(10 11))))
+              ((symbol-function 'hnview--fetch-items)
+               (lambda (ids callback)
+                 (funcall callback nil ids))))
+      (hnview--fetch-feed
+       'ask 'top 1
+       (lambda (error items)
+         (setq result-error error)
+         (setq result-items items))))
+    (should-not result-error)
+    (should (equal requested-url
+                   "https://hacker-news.firebaseio.com/v0/askstories.json"))
+    (should (equal result-items '(10)))))
+
+(ert-deftest hnview-fetch-feed-uses-web-section-source ()
+  "Feed web sections should parse HN list pages."
+  (let (requested-url requested-ids result-items result-error)
+    (cl-letf (((symbol-function 'hnview--url-text)
+               (lambda (url callback &optional _method _fields)
+                 (setq requested-url url)
+                 (funcall callback nil "<tr class='athing comtr' id='12'></tr>")))
+              ((symbol-function 'hnview--fetch-items)
+               (lambda (ids callback)
+                 (setq requested-ids ids)
+                 (funcall callback nil '((:id 12 :type "comment"))))))
+      (let ((hnview-hn-base-url "https://news.ycombinator.com"))
+        (hnview--fetch-feed
+         'new 'comments 30
+         (lambda (error items)
+           (setq result-error error)
+           (setq result-items items)))))
+    (should-not result-error)
+    (should (equal requested-url
+                   "https://news.ycombinator.com/newcomments"))
+    (should (equal requested-ids '(12)))
+    (should (equal result-items '((:id 12 :type "comment"))))))
+
 (ert-deftest hnview-profile-web-list-url-builds-known-pages ()
   "Profile web list URLs should target HN profile activity pages."
   (let ((hnview-hn-base-url "https://news.ycombinator.com"))
@@ -449,6 +504,19 @@
     (should (equal mode-name "hnview-profile:Upvoted"))
     (should-not (string-match-p "About[[:space:]]+Stories"
                                 (buffer-string)))))
+
+(ert-deftest hnview-render-feed-inserts-comment-items ()
+  "Feed rendering should handle comment sub-sections."
+  (let ((hnview--current-feed 'new)
+        (hnview--current-feed-section 'comments)
+        (hnview--stories '((:id 12 :type "comment" :by "alice"
+                            :time 1000 :text "hello")))
+        (hnview--bookmarks (make-hash-table :test #'eql)))
+    (with-temp-buffer
+      (hnview-feed-mode)
+      (hnview--render-feed)
+      (should (search-forward "alice" nil t))
+      (should (search-forward "hello" nil t)))))
 
 (ert-deftest hnview-comment-form-parses-hidden-fields ()
   "Comment form parsing should preserve HN hidden fields."

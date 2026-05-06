@@ -21,7 +21,7 @@ work is packaging polish plus a few advanced HN workflows.
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Feed browsing | Done | Top, Ask, Show, Best, New, Active. |
+| Feed browsing | Done | Top, Ask, Show, Best, New, Active; Ask/Show and Best/New sub-sections. |
 | Thread reading | Done | Story header, nested comments, load more/all. |
 | Comment UX | Done | Keyboard folding, inline `N more`, quote rendering, author styling. |
 | Translation | Done | `llm.el`, `t`/`T`, in-place replacement, SQLite cache, pruning. |
@@ -73,7 +73,10 @@ Secondary user:
 ### 6.1 Feed Browsing
 
 - Show Top, Ask, Show, Best, New, and Active feeds.
-- Switch feeds with both feed picker and number shortcuts.
+- Support Ask/Show Top and New sub-sections, plus Best/New Stories and
+  Comments sub-sections.
+- Switch feeds with both feed picker and number shortcuts; switch sub-sections
+  with `s`.
 - Refresh the current buffer with `g`.
 - Display each story with title, domain, points, author, age, and comment count.
 - Open original URLs through the system browser or EWW.

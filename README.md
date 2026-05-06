@@ -7,7 +7,8 @@ keyboard-first navigation.
 
 ## First Version Scope
 
-- Browse Top, Ask, Show, Best, New, and Active feeds.
+- Browse Top, Ask, Show, Best, New, and Active feeds, including feed
+  sub-sections where HN exposes them.
 - Open story threads inside Emacs.
 - Render nested comments with compact fold and vote status markers.
 - Open original story URLs in the browser.
@@ -63,8 +64,9 @@ Key bindings:
 | --- | --- |
 | `g` | Refresh current buffer |
 | `f` | Switch feed |
+| `s` | Switch feed sub-section |
 | `1`-`6` | Open Top, Ask, Show, Best, New, Active |
-| `RET` | Open story thread |
+| `RET` | Open the item at point |
 | `o` | Open original story URL in the system browser |
 | `e` | Open original story URL in EWW |
 | `b` | Toggle bookmark |
