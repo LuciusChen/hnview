@@ -625,7 +625,8 @@
   "Translated story titles should replace originals in place."
   (let* ((story '(:id 42 :type "story" :title "A title"))
          (hnview--translations (make-hash-table :test #'equal))
-         (hnview--hidden-translations (make-hash-table :test #'equal)))
+         (hnview--hidden-translations (make-hash-table :test #'equal))
+         (hnview-translate-by-default t))
     (puthash (hnview--translation-key story "A title" 'title)
              "一个标题" hnview--translations)
     (with-temp-buffer
@@ -634,6 +635,19 @@
       (should (search-forward "一个标题" nil t))
       (should-not (search-forward "显示原文" nil t))
       (should-not (search-forward "A title" nil t)))))
+
+(ert-deftest hnview-cached-story-title-shows-original-by-default ()
+  "Cached translations should not display by default."
+  (let* ((story '(:id 42 :type "story" :title "A title"))
+         (hnview--translations (make-hash-table :test #'equal))
+         (hnview--hidden-translations (make-hash-table :test #'equal)))
+    (puthash (hnview--translation-key story "A title" 'title)
+             "一个标题" hnview--translations)
+    (with-temp-buffer
+      (hnview--insert-story story 1)
+      (goto-char (point-min))
+      (should (search-forward "A title" nil t))
+      (should-not (search-forward "一个标题" nil t)))))
 
 (ert-deftest hnview-hidden-story-translation-shows-original ()
   "Hidden story translations should render the original title."
@@ -664,6 +678,22 @@
         (hnview--render-feed)
         (hnview--maybe-auto-translate (current-buffer))
         (should (equal called hnview--stories))))))
+
+(ert-deftest hnview-translate-by-default-auto-translates-profile ()
+  "Global translation should auto-translate profile buffers."
+  (let ((hnview-translate-by-default t)
+        (called nil))
+    (cl-letf (((symbol-function 'hnview--translate-items)
+               (lambda (items _buffer)
+                 (setq called items))))
+      (with-temp-buffer
+        (hnview-profile-mode)
+        (setq-local hnview--profile-section 'stories)
+        (setq-local hnview--profile-items
+                    '((:id 1 :type "story" :title "A title")))
+        (hnview--render-profile)
+        (hnview--maybe-auto-translate (current-buffer))
+        (should (equal called hnview--profile-items))))))
 
 (ert-deftest hnview-fetch-tree-marks-budget-truncation ()
   "Comment tree fetching should mark nodes truncated when budget is gone."
@@ -730,7 +760,8 @@
   "Toggling a cached translation should hide it."
   (let ((story '(:id 42 :type "story" :title "A title"))
         (hnview--translations (make-hash-table :test #'equal))
-        (hnview--state-loaded-p t))
+        (hnview--state-loaded-p t)
+        (hnview-translate-by-default t))
     (with-temp-buffer
       (hnview-feed-mode)
       (puthash (hnview--translation-key story "A title" 'title)
@@ -751,7 +782,8 @@
   (let ((first '(:id 1 :type "story" :title "First"))
         (second '(:id 2 :type "story" :title "Second"))
         (hnview--translations (make-hash-table :test #'equal))
-        (hnview--state-loaded-p t))
+        (hnview--state-loaded-p t)
+        (hnview-translate-by-default t))
     (with-temp-buffer
       (hnview-feed-mode)
       (puthash (hnview--translation-key second "Second" 'title)
@@ -768,7 +800,8 @@
   (let ((first '(:id 1 :type "story" :title "First"))
         (second '(:id 2 :type "story" :title "Second"))
         (hnview--translations (make-hash-table :test #'equal))
-        (hnview--state-loaded-p t))
+        (hnview--state-loaded-p t)
+        (hnview-translate-by-default t))
     (puthash (hnview--translation-key first "First" 'title)
              "第一" hnview--translations)
     (puthash (hnview--translation-key second "Second" 'title)
@@ -817,6 +850,30 @@
                 (goto-char (point-min))
                 (and (search-forward "第一" nil t)
                      (search-forward "第二" nil t)))))))
+
+(ert-deftest hnview-translate-visible-shows-cached-from-original-default ()
+  "T should show cached translations when default rendering shows originals."
+  (let ((story '(:id 1 :type "story" :title "First"))
+        (hnview--translations (make-hash-table :test #'equal))
+        (hnview--state-loaded-p t)
+        translated)
+    (puthash (hnview--translation-key story "First" 'title)
+             "第一" hnview--translations)
+    (cl-letf (((symbol-function 'hnview--translate-item)
+               (lambda (_item _callback)
+                 (setq translated t))))
+      (with-temp-buffer
+        (hnview-feed-mode)
+        (setq-local hnview--stories (list story))
+        (hnview--render-feed)
+        (goto-char (point-min))
+        (should (search-forward "First" nil t))
+        (hnview-translate-visible)
+        (should-not translated)
+        (should-not (hnview--translation-hidden-p story 'title))
+        (should (save-excursion
+                  (goto-char (point-min))
+                  (search-forward "第一" nil t)))))))
 
 (ert-deftest hnview-translate-visible-schedules-missing-translations ()
   "T should schedule missing translations instead of starting them inline."
@@ -882,7 +939,8 @@
                   :hnview-children (,comment)))
          (hnview--translations (make-hash-table :test #'equal))
          (hnview--hidden-translations (make-hash-table :test #'equal))
-         (hnview--state-loaded-p t))
+         (hnview--state-loaded-p t)
+         (hnview-translate-by-default t))
     (puthash (hnview--translation-key
               comment "hello world with enough trailing words" 'text)
              "translated text" hnview--translations)
@@ -912,7 +970,8 @@
                   :hnview-children (,comment)))
          (hnview--translations (make-hash-table :test #'equal))
          (hnview--hidden-translations (make-hash-table :test #'equal))
-         (hnview--state-loaded-p t))
+         (hnview--state-loaded-p t)
+         (hnview-translate-by-default t))
     (puthash (hnview--translation-key comment source 'text)
              "uno\n\ndos" hnview--translations)
     (with-temp-buffer
@@ -936,7 +995,8 @@
   "Translated comments should replace original text in place."
   (let* ((comment '(:id 1 :type "comment" :by "alice" :text "hello"))
          (hnview--translations (make-hash-table :test #'equal))
-         (hnview--hidden-translations (make-hash-table :test #'equal)))
+         (hnview--hidden-translations (make-hash-table :test #'equal))
+         (hnview-translate-by-default t))
     (puthash (hnview--translation-key comment "hello" 'text)
              "你好" hnview--translations)
     (with-temp-buffer

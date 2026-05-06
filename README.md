@@ -125,6 +125,12 @@ Optional automatic translation:
 (setq hnview-auto-translate-thread t)
 ```
 
+To make translation the default across hnview buffers:
+
+```elisp
+(setq hnview-translate-by-default t)
+```
+
 Press `t` to toggle translation for the item at point, translating it first if
 needed. Press `T` to toggle translation for all visible titles and comments:
 when any visible translation is active it switches visible items back to the
@@ -132,7 +138,9 @@ original text; otherwise it shows cached translations and starts missing
 translations asynchronously. Translated text replaces the original text in
 place and keeps the existing story/comment layout: metadata, status markers,
 indentation, and comment hierarchy stay unchanged. Successful translations are
-cached in the SQLite database at `hnview-database-file`.
+cached in the SQLite database at `hnview-database-file`. Cached translations do
+not replace originals by default unless `hnview-translate-by-default` is
+enabled or you toggle translation with `t`/`T`.
 
 Upvoting uses Hacker News' logged-in vote endpoint. Run `M-x hnview-login`
 first. After a successful `u` vote, hnview shows `△` as a session-local status

@@ -71,6 +71,15 @@
   :type 'boolean
   :group 'hnview)
 
+(defcustom hnview-translate-by-default nil
+  "Whether hnview buffers should show translations by default.
+When non-nil, cached translations are displayed automatically and missing
+visible translations are started asynchronously after loading.  The t and T
+commands can still switch the current item or visible items back to the
+original language in the current buffer."
+  :type 'boolean
+  :group 'hnview)
+
 (defcustom hnview-translate-backend 'llm
   "Translation backend used by hnview."
   :type '(choice (const :tag "llm.el" llm))
@@ -1485,14 +1494,14 @@ REMAINING is a mutable one-item list containing the fetch budget."
   "Return non-nil when ITEM has a visible translation."
   (cl-some (lambda (segment)
              (and (hnview--translated-segment-p item (car segment))
-                  (not (hnview--translation-hidden-p item (car segment)))))
+                  (hnview--translation-visible-state-p item (car segment))))
            (hnview--translation-segments item)))
 
 (defun hnview--active-translation-p (item)
   "Return non-nil when ITEM is showing translated or pending text."
   (cl-some (lambda (segment)
              (pcase-let ((`(,name . ,text) segment))
-               (and (not (hnview--translation-hidden-p item name))
+               (and (hnview--translation-visible-state-p item name)
                     (or (hnview--cached-translation item name text)
                         (hnview--translation-pending-p item name text)))))
            (hnview--translation-segments item)))
@@ -1731,23 +1740,32 @@ REMAINING is a mutable one-item list containing the fetch budget."
   (format "%s:%s" (or (plist-get item :id) "region") segment))
 
 (defun hnview--ensure-hidden-translations ()
-  "Ensure translation visibility state exists for the current buffer."
+  "Ensure translation visibility overrides exist for the current buffer."
   (unless hnview--hidden-translations
     (setq-local hnview--hidden-translations
                 (make-hash-table :test #'equal))))
 
 (defun hnview--translation-hidden-p (item segment)
   "Return non-nil when ITEM SEGMENT translation is hidden."
+  (not (hnview--translation-visible-state-p item segment)))
+
+(defun hnview--translation-visible-state-p (item segment)
+  "Return non-nil when ITEM SEGMENT should show translation."
   (hnview--ensure-hidden-translations)
-  (gethash (hnview--original-key item segment) hnview--hidden-translations))
+  (let ((override (gethash (hnview--original-key item segment)
+                           hnview--hidden-translations)))
+    (cond
+     ((eq override 'translated) t)
+     ((or (eq override 'original) (eq override t)) nil)
+     (t hnview-translate-by-default))))
 
 (defun hnview--set-translation-hidden (item segment hidden)
   "Set ITEM SEGMENT translation visibility according to HIDDEN."
   (hnview--ensure-hidden-translations)
   (let ((key (hnview--original-key item segment)))
     (if hidden
-        (puthash key t hnview--hidden-translations)
-      (remhash key hnview--hidden-translations))))
+        (puthash key 'original hnview--hidden-translations)
+      (puthash key 'translated hnview--hidden-translations))))
 
 (defun hnview--set-item-translation-hidden (item hidden)
   "Set translation visibility for every segment of ITEM according to HIDDEN."
@@ -1756,7 +1774,7 @@ REMAINING is a mutable one-item list containing the fetch budget."
 
 (defun hnview--insert-title-segment (item source)
   "Insert ITEM title SOURCE."
-  (let ((translation (unless (hnview--translation-hidden-p item 'title)
+  (let ((translation (when (hnview--translation-visible-state-p item 'title)
                        (hnview--cached-translation item 'title source))))
     (if translation
         (hnview--insert-line translation 'hnview-title 'hnview-item item)
@@ -1764,12 +1782,13 @@ REMAINING is a mutable one-item list containing the fetch budget."
 
 (defun hnview--insert-text-segment (item segment source indent face)
   "Insert ITEM SEGMENT SOURCE at INDENT with FACE."
-  (let ((translation (unless (hnview--translation-hidden-p item segment)
-                       (hnview--cached-translation item segment source))))
+  (let* ((visible (hnview--translation-visible-state-p item segment))
+         (translation (when visible
+                        (hnview--cached-translation item segment source))))
     (cond
      (translation
       (hnview--insert-translated-lines item translation indent face))
-     ((hnview--translation-pending-p item segment source)
+     ((and visible (hnview--translation-pending-p item segment source))
       (insert (make-string indent ?\s))
       (hnview--insert-line "Translating..." 'hnview-loading
                             'hnview-item item))
@@ -2279,9 +2298,7 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
              (setq-local hnview--error-message error)
              (setq-local hnview--inbox-replies replies)
              (hnview--render-inbox)
-             (when hnview-auto-translate-thread
-               (hnview--translate-items
-                (hnview--visible-buffer-items) buffer)))))))))
+             (hnview--maybe-auto-translate buffer))))))))
 
 ;;;###autoload
 (defun hnview-profile (&optional username section)
@@ -2320,9 +2337,7 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
              (setq-local hnview--profile-user user)
              (setq-local hnview--profile-items items)
              (hnview--render-profile)
-             (when hnview-auto-translate-thread
-               (hnview--translate-items
-                (hnview--visible-buffer-items) buffer)))))))))
+             (hnview--maybe-auto-translate buffer))))))))
 
 (defun hnview-profile-switch-section ()
   "Switch the current profile section."
@@ -2748,9 +2763,9 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
       (user-error "No item at point"))
     (cond
      ((or (hnview--fully-translated-p item)
-          (hnview--visible-translation-p item))
+          (hnview--active-translation-p item))
       (hnview--set-item-translation-hidden
-       item (hnview--visible-translation-p item))
+       item (hnview--active-translation-p item))
       (hnview--rerender-current-buffer state))
      (t
       (hnview--set-item-translation-hidden item nil)
@@ -2827,9 +2842,12 @@ generation is no longer active."
   "Auto-translate BUFFER when enabled."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (when (or (and (derived-mode-p 'hnview-feed-mode)
+      (when (or hnview-translate-by-default
+                (and (derived-mode-p 'hnview-feed-mode)
                      hnview-auto-translate-feed)
-                (and (derived-mode-p 'hnview-thread-mode)
+                (and (or (derived-mode-p 'hnview-thread-mode)
+                         (derived-mode-p 'hnview-inbox-mode)
+                         (derived-mode-p 'hnview-profile-mode))
                      hnview-auto-translate-thread))
         (hnview--translate-items (hnview--visible-buffer-items) buffer)))))
 

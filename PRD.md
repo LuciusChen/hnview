@@ -108,6 +108,8 @@ Secondary user:
 - Allow `hnview-llm-provider` to be either a provider object or a provider
   factory function.
 - Translate titles, story text, and comments.
+- `hnview-translate-by-default` enables translated display and asynchronous
+  missing translation requests by default across hnview buffers.
 - `t` toggles translation for the current item:
   - If not translated, start translation.
   - If translated and visible, show original.
@@ -120,8 +122,9 @@ Secondary user:
   paragraph blank lines.
 - Toggling translation should preserve point within the current item.
 - Successful translations are cached in SQLite.
-- Translation display state is buffer/session-local; cached translations are
-  persistent.
+- Translation display overrides are buffer/session-local; cached translations
+  are persistent and do not force translated display unless global translated
+  display is enabled.
 - Cache pruning should support TTL and max-entry limits.
 
 ### 6.5 Persistence
