@@ -16,6 +16,8 @@ keyboard-first navigation.
 - Cache translations locally.
 - Optionally auto-translate feeds and threads.
 - Load more comments on demand for large threads.
+- View user profiles with About, Stories, Comments, Favorites, Upvoted, and
+  Hidden sections.
 - Scan replies to your Hacker News submissions in an inbox buffer.
 - Log in to Hacker News and compose replies from Emacs.
 - Translate reply drafts to English before submitting.
@@ -74,6 +76,34 @@ Key bindings:
 | `+` | Load more comments in a thread |
 | `*` | Load all comments in a thread |
 | `n` / `p` | Move between items |
+
+In profile buffers:
+
+| Key | Action |
+| --- | --- |
+| `f` | Switch profile section |
+| `1`-`6` | Open About, Stories, Comments, Favorites, Upvoted, Hidden |
+| `RET` | Open the item at point |
+
+## Profiles
+
+Configure your Hacker News username:
+
+```elisp
+(setq hnview-username "your-hn-username")
+```
+
+Then run:
+
+```text
+M-x hnview-profile
+```
+
+About, Stories, and Comments use the public Hacker News API. Favorites,
+Upvoted, and Hidden use Hacker News web pages through `plz`, so they reuse the
+same SQLite-backed login cookies as reply and voting. Favorites are public when
+HN exposes them for that user; Upvoted and Hidden are normally only available
+for the logged-in user.
 
 ## Translation
 

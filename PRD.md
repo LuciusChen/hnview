@@ -30,6 +30,7 @@ work is packaging polish plus a few advanced HN workflows.
 | Login/reply | Done | `auth-source` credentials, HN web forms, reply buffer. |
 | Upvote | Done | Uses HN vote endpoint; status marker is session-local. |
 | Inbox | Done | Scans user submissions and shows direct replies. |
+| Profile/activity views | Done | About, Stories, Comments, Favorites, Upvoted, Hidden. |
 | HTTP transport | Done | Uses `plz` for HTTP requests. |
 | Cookie storage | Done | Stores HN cookies in SQLite. |
 | Packaging | Needs work | Needs final install instructions and package metadata polish. |
@@ -152,6 +153,18 @@ Secondary user:
 - Render replies in an inbox buffer.
 - Inbox should not require login because it uses public HN API data.
 
+### 6.8 Profile and Activity
+
+- Open a profile buffer for `hnview-username` or a prompted username.
+- Render profile sections for About, Stories, Comments, Favorites, Upvoted,
+  and Hidden.
+- About, Stories, and Comments should use public HN API data.
+- Favorites, Upvoted, and Hidden should use HN web pages and existing logged-in
+  cookies when HN requires them.
+- Switch profile sections with `f` and fixed number keys.
+- Profile activity items should support the same open, bookmark, upvote, reply,
+  and translation commands as feed/thread items where applicable.
+
 ## 7. UX Requirements
 
 - Use `special-mode` for read-only UI buffers.
@@ -171,17 +184,18 @@ Secondary user:
 
 | Key | Scope | Action |
 | --- | --- | --- |
-| `g` | feed/thread/inbox | Refresh |
-| `f` | feed | Switch feed |
+| `g` | feed/thread/inbox/profile | Refresh |
+| `f` | feed/profile | Switch feed or profile section |
 | `1`-`7` | feed | Open fixed feed |
-| `RET` | feed/thread | Open thread or URL |
-| `o` | feed/thread/inbox | Open original URL |
-| `e` | feed/thread/inbox | Open original URL in EWW |
-| `b` | feed/thread | Toggle bookmark |
-| `u` | feed/thread/inbox | Upvote item |
-| `r` | feed/thread/inbox | Reply |
-| `t` | feed/thread/inbox | Toggle item translation |
-| `T` | feed/thread/inbox | Toggle visible item translations |
+| `1`-`6` | profile | Open fixed profile section |
+| `RET` | feed/thread/profile | Open thread, item, or URL |
+| `o` | feed/thread/inbox/profile | Open original URL |
+| `e` | feed/thread/inbox/profile | Open original URL in EWW |
+| `b` | feed/thread/profile | Toggle bookmark |
+| `u` | feed/thread/inbox/profile | Upvote item |
+| `r` | feed/thread/inbox/profile | Reply |
+| `t` | feed/thread/inbox/profile | Toggle item translation |
+| `T` | feed/thread/inbox/profile | Toggle visible item translations |
 | `TAB` | thread | Fold/unfold comment |
 | `+` | thread | Load more comments |
 | `*` | thread | Load all comments |
@@ -248,7 +262,8 @@ V1 is acceptable when:
 - `checkdoc-file` reports no warnings for `hnview.el`.
 - `package-lint-batch-and-exit hnview.el` reports no warnings.
 - A user can browse a feed, open a thread, translate a comment, fold comments,
-  bookmark an item, log in, upvote, and compose/cancel/submit a reply.
+  bookmark an item, open profile activity, log in, upvote, and
+  compose/cancel/submit a reply.
 
 ## 13. Next Phase Plan
 

@@ -129,6 +129,16 @@
   :type 'natnum
   :group 'hnview)
 
+(defcustom hnview-profile-item-limit 80
+  "Number of profile activity items to show."
+  :type 'natnum
+  :group 'hnview)
+
+(defcustom hnview-profile-submission-scan-limit 240
+  "Number of user submissions to scan for profile activity lists."
+  :type 'natnum
+  :group 'hnview)
+
 (defcustom hnview-vote-up-symbol "△"
   "Symbol displayed for comments upvoted through hnview."
   :type 'string
@@ -220,6 +230,14 @@
     (jobs . ("Jobs" . "jobstories"))
     (active . ("Active" . nil))))
 
+(defconst hnview--profile-sections
+  '((about . "About")
+    (stories . "Stories")
+    (comments . "Comments")
+    (favorites . "Favorites")
+    (upvoted . "Upvoted")
+    (hidden . "Hidden")))
+
 (defvar hnview--item-cache (make-hash-table :test #'eql))
 (defvar hnview--translations (make-hash-table :test #'equal))
 (defvar hnview--pending-translations (make-hash-table :test #'equal))
@@ -238,6 +256,10 @@
 (defvar-local hnview--hidden-translations nil)
 (defvar-local hnview--thread-comment-limit nil)
 (defvar-local hnview--inbox-replies nil)
+(defvar-local hnview--profile-username nil)
+(defvar-local hnview--profile-section 'about)
+(defvar-local hnview--profile-user nil)
+(defvar-local hnview--profile-items nil)
 (defvar-local hnview--reply-parent nil)
 (defvar-local hnview--reply-source-buffer nil)
 (defvar-local hnview--reply-translated-p nil)
@@ -301,6 +323,29 @@
     (define-key map (kbd "p") #'hnview-previous-item)
     map)
   "Keymap for `hnview-inbox-mode'.")
+
+(defvar hnview-profile-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g") #'hnview-refresh)
+    (define-key map (kbd "f") #'hnview-profile-switch-section)
+    (define-key map (kbd "1") #'hnview-profile-about)
+    (define-key map (kbd "2") #'hnview-profile-stories)
+    (define-key map (kbd "3") #'hnview-profile-comments)
+    (define-key map (kbd "4") #'hnview-profile-favorites)
+    (define-key map (kbd "5") #'hnview-profile-upvoted)
+    (define-key map (kbd "6") #'hnview-profile-hidden)
+    (define-key map (kbd "RET") #'hnview-open-item)
+    (define-key map (kbd "o") #'hnview-open-url)
+    (define-key map (kbd "e") #'hnview-open-url-eww)
+    (define-key map (kbd "b") #'hnview-toggle-bookmark)
+    (define-key map (kbd "r") #'hnview-reply-at-point)
+    (define-key map (kbd "u") #'hnview-vote-up)
+    (define-key map (kbd "t") #'hnview-translate-at-point)
+    (define-key map (kbd "T") #'hnview-translate-visible)
+    (define-key map (kbd "n") #'hnview-next-item)
+    (define-key map (kbd "p") #'hnview-previous-item)
+    map)
+  "Keymap for `hnview-profile-mode'.")
 
 (defvar hnview-reply-mode-map
   (let ((map (make-sparse-keymap)))
@@ -546,6 +591,11 @@
 (defun hnview--feed-endpoint (feed)
   "Return Hacker News API endpoint for FEED."
   (cdr (alist-get feed hnview--feeds)))
+
+(defun hnview--profile-section-label (section)
+  "Return display label for profile SECTION."
+  (or (cdr (alist-get section hnview--profile-sections))
+      (symbol-name section)))
 
 (defun hnview--url-json (url callback)
   "Fetch URL as JSON, then call CALLBACK with ERROR and DATA."
@@ -875,6 +925,103 @@ request body."
    (format "%s/user/%s.json" hnview--api-base
            (url-hexify-string username))
    callback))
+
+(defun hnview--fetch-profile-section (username section callback)
+  "Fetch USERNAME profile SECTION, then call CALLBACK with ERROR USER ITEMS."
+  (hnview--fetch-user
+   username
+   (lambda (error user)
+     (cond
+      (error
+       (funcall callback error nil nil))
+      ((null user)
+       (funcall callback (format "HN user not found: %s" username) nil nil))
+      ((eq section 'about)
+       (funcall callback nil user nil))
+      ((memq section '(stories comments))
+       (hnview--fetch-profile-submissions user section callback))
+      ((memq section '(favorites upvoted hidden))
+       (hnview--fetch-profile-web-list username section user callback))
+      (t
+       (funcall callback (format "Unknown profile section: %s" section)
+                user nil))))))
+
+(defun hnview--fetch-profile-submissions (user section callback)
+  "Fetch USER submitted items for profile SECTION, then call CALLBACK."
+  (hnview--fetch-items
+   (hnview--take (plist-get user :submitted)
+                 hnview-profile-submission-scan-limit)
+   (lambda (error items)
+     (if error
+         (funcall callback error user nil)
+       (funcall callback nil user
+                (hnview--take
+                 (cl-remove-if-not
+                  (lambda (item)
+                    (hnview--profile-submission-p
+                     item section (plist-get user :id)))
+                  items)
+                 hnview-profile-item-limit))))))
+
+(defun hnview--profile-submission-p (item section username)
+  "Return non-nil when ITEM belongs in USERNAME profile SECTION."
+  (and item
+       (equal (plist-get item :by) username)
+       (pcase section
+         ('stories (member (plist-get item :type) '("story" "job" "poll")))
+         ('comments (equal (plist-get item :type) "comment"))
+         (_ nil))))
+
+(defun hnview--fetch-profile-web-list (username section user callback)
+  "Fetch USERNAME profile web list SECTION for USER, then call CALLBACK."
+  (hnview--url-text
+   (hnview--profile-web-list-url username section)
+   (lambda (error html)
+     (cond
+      (error
+       (funcall callback error user nil))
+      ((hnview--profile-web-list-error html section)
+       (funcall callback (hnview--profile-web-list-error html section)
+                user nil))
+      (t
+       (hnview--fetch-items
+        (hnview--take (hnview--parse-hn-list-item-ids html)
+                      hnview-profile-item-limit)
+        (lambda (items-error items)
+          (funcall callback items-error user items))))))))
+
+(defun hnview--profile-web-list-url (username section)
+  "Return Hacker News web URL for USERNAME profile SECTION."
+  (pcase section
+    ('favorites (hnview--hn-url "favorites" `(("id" . ,username))))
+    ('upvoted (hnview--hn-url "upvoted" `(("id" . ,username))))
+    ('hidden (hnview--hn-url "hidden"))
+    (_ (error "Unsupported profile web section: %s" section))))
+
+(defun hnview--profile-web-list-error (html section)
+  "Return an error for profile SECTION HTML, or nil."
+  (cond
+   ((string-match-p "Can't display that" html)
+    (format "HN cannot display %s for this user"
+            (hnview--profile-section-label section)))
+   ((hnview--hn-error-message html))))
+
+(defun hnview--parse-hn-list-item-ids (html)
+  "Return HN item ids from an HN list page HTML."
+  (let ((start 0)
+        ids)
+    (while (string-match "<tr[^>]*class=['\"][^'\"]*\\bathing\\b[^'\"]*['\"][^>]*id=['\"]\\([0-9]+\\)['\"]"
+                         html start)
+      (push (string-to-number (match-string 1 html)) ids)
+      (setq start (match-end 0)))
+    (setq start 0)
+    (while (string-match "<tr[^>]*id=['\"]\\([0-9]+\\)['\"][^>]*class=['\"][^'\"]*\\bathing\\b[^'\"]*['\"]"
+                         html start)
+      (let ((id (string-to-number (match-string 1 html))))
+        (unless (member id ids)
+          (push id ids)))
+      (setq start (match-end 0)))
+    (nreverse ids)))
 
 (defun hnview--fetch-inbox-replies (username limit callback)
   "Fetch replies to USERNAME submissions up to LIMIT, then call CALLBACK."
@@ -1758,6 +1905,98 @@ REMAINING is a mutable one-item list containing the fetch budget."
         (hnview--insert-inbox-reply reply))))
     (goto-char (point-min))))
 
+(defun hnview--render-profile ()
+  "Render the current profile buffer."
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (hnview--render-profile-header)
+    (hnview--render-profile-tabs)
+    (insert "\n")
+    (cond
+     (hnview--loading-message
+      (hnview--insert-line hnview--loading-message 'hnview-loading))
+     (hnview--error-message
+      (hnview--insert-line hnview--error-message 'error))
+     ((eq hnview--profile-section 'about)
+      (hnview--render-profile-about))
+     ((null hnview--profile-items)
+      (hnview--insert-line "No items found." 'hnview-meta))
+     (t
+      (cl-loop for item in hnview--profile-items
+               for index from 1
+               do (hnview--insert-profile-item item index))))
+    (goto-char (point-min))))
+
+(defun hnview--render-profile-header ()
+  "Render the current profile header."
+  (hnview--insert-line (or hnview--profile-username "HN user") 'hnview-date-main)
+  (when hnview--profile-user
+    (let ((parts (delq nil
+                       (list
+                        (when (plist-member hnview--profile-user :created)
+                          (format "Joined %s"
+                                  (hnview--relative-time
+                                   (plist-get hnview--profile-user :created))))
+                        (when (plist-member hnview--profile-user :karma)
+                          (format "%s Karma"
+                                  (plist-get hnview--profile-user :karma)))))))
+      (when parts
+        (hnview--insert-line (string-join parts " • ") 'hnview-meta))))
+  (insert "\n"))
+
+(defun hnview--render-profile-tabs ()
+  "Render profile section tabs."
+  (let ((first t))
+    (dolist (section hnview--profile-sections)
+      (unless first
+        (insert "    "))
+      (hnview--insert
+       (cdr section)
+       (if (eq (car section) hnview--profile-section)
+           'hnview-domain
+         'default))
+      (setq first nil))
+    (insert "\n")
+    (hnview--insert-line (make-string 72 ?-) 'hnview-divider)))
+
+(defun hnview--render-profile-about ()
+  "Render the current profile about section."
+  (if-let* ((about (hnview--html-to-text
+                    (plist-get hnview--profile-user :about))))
+      (if (string-empty-p about)
+          (hnview--insert-line "No about text." 'hnview-meta)
+        (hnview--insert-profile-about-text about))
+    (hnview--insert-line "No about text." 'hnview-meta)))
+
+(defun hnview--insert-profile-about-text (text)
+  "Insert profile about TEXT without item properties."
+  (dolist (line (split-string (hnview--normalize-paragraphs text) "\n"))
+    (if (string-empty-p line)
+        (insert "\n")
+      (hnview--insert-line line 'default))))
+
+(defun hnview--insert-profile-item (item index)
+  "Insert profile ITEM at INDEX."
+  (pcase (plist-get item :type)
+    ((or "story" "job" "poll")
+     (hnview--insert-story item index))
+    ("comment"
+     (hnview--insert-profile-comment item index))
+    (_
+     (hnview--insert-story item index))))
+
+(defun hnview--insert-profile-comment (comment index)
+  "Insert profile COMMENT at INDEX."
+  (let ((start (point)))
+    (hnview--insert (format "%2d. " index) 'hnview-index)
+    (if (gethash (plist-get comment :id) hnview--bookmarks)
+        (hnview--insert "* " 'hnview-domain)
+      (insert "  "))
+    (hnview--insert-comment-meta-line comment 0)
+    (hnview--insert-comment-text comment 6)
+    (insert "\n")
+    (add-text-properties start (point) `(hnview-item ,comment))))
+
 (defun hnview--insert-inbox-reply (reply)
   "Insert inbox REPLY."
   (let* ((parent (plist-get reply :hnview-parent))
@@ -2045,6 +2284,96 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
                 (hnview--visible-buffer-items) buffer)))))))))
 
 ;;;###autoload
+(defun hnview-profile (&optional username section)
+  "Open the Hacker News profile for USERNAME at SECTION."
+  (interactive)
+  (let ((name (or username
+                  hnview-username
+                  (read-string "HN username: "))))
+    (unless (and name (not (string-empty-p name)))
+      (user-error "HN username is not configured"))
+    (hnview--open-profile name (or section 'about))))
+
+(defun hnview--open-profile (username section)
+  "Open USERNAME profile SECTION."
+  (hnview--ensure-state-loaded)
+  (let ((buffer (get-buffer-create (format "*hnview: profile %s*" username))))
+    (switch-to-buffer buffer)
+    (hnview-profile-mode)
+    (setq-local hnview--profile-username username)
+    (setq-local hnview--profile-section section)
+    (setq-local hnview--loading-message
+                (format "Loading %s..."
+                        (hnview--profile-section-label section)))
+    (setq-local hnview--error-message nil)
+    (setq-local hnview--profile-items nil)
+    (hnview--render-profile)
+    (hnview--fetch-profile-section
+     username section
+     (lambda (error user items)
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (when (and (equal hnview--profile-username username)
+                      (eq hnview--profile-section section))
+             (setq-local hnview--loading-message nil)
+             (setq-local hnview--error-message error)
+             (setq-local hnview--profile-user user)
+             (setq-local hnview--profile-items items)
+             (hnview--render-profile)
+             (when hnview-auto-translate-thread
+               (hnview--translate-items
+                (hnview--visible-buffer-items) buffer)))))))))
+
+(defun hnview-profile-switch-section ()
+  "Switch the current profile section."
+  (interactive)
+  (unless (derived-mode-p 'hnview-profile-mode)
+    (user-error "Not in an hnview profile buffer"))
+  (let* ((choices (mapcar (lambda (section)
+                            (cons (cdr section) (car section)))
+                          hnview--profile-sections))
+         (default (hnview--profile-section-label hnview--profile-section))
+         (choice (completing-read "Section: " choices nil t nil nil default)))
+    (hnview--open-profile hnview--profile-username
+                          (cdr (assoc choice choices)))))
+
+(defun hnview--profile-open-current-user-section (section)
+  "Open current profile user SECTION."
+  (if (derived-mode-p 'hnview-profile-mode)
+      (hnview--open-profile hnview--profile-username section)
+    (hnview-profile nil section)))
+
+(defun hnview-profile-about ()
+  "Open the current profile About section."
+  (interactive)
+  (hnview--profile-open-current-user-section 'about))
+
+(defun hnview-profile-stories ()
+  "Open the current profile Stories section."
+  (interactive)
+  (hnview--profile-open-current-user-section 'stories))
+
+(defun hnview-profile-comments ()
+  "Open the current profile Comments section."
+  (interactive)
+  (hnview--profile-open-current-user-section 'comments))
+
+(defun hnview-profile-favorites ()
+  "Open the current profile Favorites section."
+  (interactive)
+  (hnview--profile-open-current-user-section 'favorites))
+
+(defun hnview-profile-upvoted ()
+  "Open the current profile Upvoted section."
+  (interactive)
+  (hnview--profile-open-current-user-section 'upvoted))
+
+(defun hnview-profile-hidden ()
+  "Open the current profile Hidden section."
+  (interactive)
+  (hnview--profile-open-current-user-section 'hidden))
+
+;;;###autoload
 (defun hnview-open-feed (feed)
   "Open hnview FEED."
   (interactive (list (hnview--read-feed)))
@@ -2139,12 +2468,24 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
       (unless story
         (user-error "No story in this buffer"))
       (hnview--open-thread story limit)))
+   ((derived-mode-p 'hnview-profile-mode)
+    (hnview--open-profile hnview--profile-username hnview--profile-section))
    (t (user-error "Not in an hnview buffer"))))
 
 (defun hnview-open-thread ()
   "Open the story thread at point."
   (interactive)
   (hnview--open-thread (hnview--story-at-point)))
+
+(defun hnview-open-item ()
+  "Open the item at point."
+  (interactive)
+  (let ((item (hnview--item-at-point)))
+    (unless item
+      (user-error "No item at point"))
+    (if (member (plist-get item :type) '("story" "job" "poll"))
+        (hnview--open-thread item)
+      (browse-url (hnview--item-url item)))))
 
 (defun hnview-load-more-comments ()
   "Load more comments in the current thread."
@@ -2524,6 +2865,12 @@ generation is no longer active."
 
 (define-derived-mode hnview-inbox-mode special-mode "hnview-inbox"
   "Major mode for hnview inbox buffers."
+  (setq-local truncate-lines nil)
+  (setq-local hnview--hidden-translations
+              (make-hash-table :test #'equal)))
+
+(define-derived-mode hnview-profile-mode special-mode "hnview-profile"
+  "Major mode for hnview profile buffers."
   (setq-local truncate-lines nil)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))

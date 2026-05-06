@@ -83,6 +83,19 @@
   (should (eq (lookup-key hnview-inbox-mode-map (kbd "u"))
               #'hnview-vote-up)))
 
+(ert-deftest hnview-profile-mode-has-section-and-item-keys ()
+  "Profile buffers should expose section and item commands."
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "f"))
+              #'hnview-profile-switch-section))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "1"))
+              #'hnview-profile-about))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "6"))
+              #'hnview-profile-hidden))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "RET"))
+              #'hnview-open-item))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "t"))
+              #'hnview-translate-at-point)))
+
 (ert-deftest hnview-reply-mode-has-compose-keys ()
   "Reply buffers should expose translation and submission commands."
   (should (eq (lookup-key hnview-reply-mode-map (kbd "C-c C-t"))
@@ -273,6 +286,62 @@
                    "https://news.ycombinator.com/reply?id=42"))
     (should (equal (hnview--hn-action-url "comment")
                    "https://news.ycombinator.com/comment"))))
+
+(ert-deftest hnview-profile-web-list-url-builds-known-pages ()
+  "Profile web list URLs should target HN profile activity pages."
+  (let ((hnview-hn-base-url "https://news.ycombinator.com"))
+    (should (equal (hnview--profile-web-list-url "alice" 'favorites)
+                   "https://news.ycombinator.com/favorites?id=alice"))
+    (should (equal (hnview--profile-web-list-url "alice" 'upvoted)
+                   "https://news.ycombinator.com/upvoted?id=alice"))
+    (should (equal (hnview--profile-web-list-url "alice" 'hidden)
+                   "https://news.ycombinator.com/hidden"))))
+
+(ert-deftest hnview-parse-hn-list-item-ids-reads-athings ()
+  "HN list parsing should collect story and comment row IDs."
+  (let ((html "<tr class='athing' id='10'></tr>
+<tr id=\"11\" class=\"athing comtr\"></tr>
+<tr class='spacer' id='12'></tr>"))
+    (should (equal (hnview--parse-hn-list-item-ids html) '(10 11)))))
+
+(ert-deftest hnview-profile-submission-filter-separates-stories-comments ()
+  "Profile submission filtering should separate stories and comments."
+  (should (hnview--profile-submission-p
+           '(:id 1 :type "story" :by "alice") 'stories "alice"))
+  (should (hnview--profile-submission-p
+           '(:id 2 :type "comment" :by "alice") 'comments "alice"))
+  (should-not (hnview--profile-submission-p
+               '(:id 3 :type "comment" :by "alice") 'stories "alice"))
+  (should-not (hnview--profile-submission-p
+               '(:id 4 :type "story" :by "bob") 'stories "alice")))
+
+(ert-deftest hnview-fetch-profile-web-list-parses-and-fetches-items ()
+  "Profile web lists should parse HN rows and fetch API items."
+  (let (requested-url requested-ids result-user result-items result-error)
+    (cl-letf (((symbol-function 'hnview--url-text)
+               (lambda (url callback &optional _method _fields)
+                 (setq requested-url url)
+                 (funcall callback
+                          nil
+                          "<tr class='athing' id='10'></tr>
+<tr class='athing' id='11'></tr>")))
+              ((symbol-function 'hnview--fetch-items)
+               (lambda (ids callback)
+                 (setq requested-ids ids)
+                 (funcall callback nil '((:id 10) (:id 11))))))
+      (let ((hnview-hn-base-url "https://news.ycombinator.com"))
+        (hnview--fetch-profile-web-list
+         "alice" 'favorites '(:id "alice")
+         (lambda (error user items)
+           (setq result-error error)
+           (setq result-user user)
+           (setq result-items items)))))
+    (should-not result-error)
+    (should (equal requested-url
+                   "https://news.ycombinator.com/favorites?id=alice"))
+    (should (equal requested-ids '(10 11)))
+    (should (equal result-user '(:id "alice")))
+    (should (equal result-items '((:id 10) (:id 11))))))
 
 (ert-deftest hnview-comment-form-parses-hidden-fields ()
   "Comment form parsing should preserve HN hidden fields."
