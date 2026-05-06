@@ -263,6 +263,17 @@
         (should (member "session=old" cookies))
         (should (member "user=abc" cookies))))))
 
+(ert-deftest hnview-plz-error-message-explains-hn-rate-limit ()
+  "HTTP 429 should be reported as an HN rate limit."
+  (cl-letf (((symbol-function 'plz-error-message)
+             (lambda (_error) "HTTP 429"))
+            ((symbol-function 'plz-error-response)
+             (lambda (_error) 'response))
+            ((symbol-function 'plz-response-status)
+             (lambda (_response) 429)))
+    (should (equal (hnview--plz-error-message 'error)
+                   "HN rate-limited this request (HTTP 429); wait before trying again"))))
+
 (ert-deftest hnview-ensure-plz-reports-load-errors ()
   "Missing or broken plz should produce a user-facing error."
   (let ((original-fboundp (symbol-function 'fboundp))
@@ -455,6 +466,15 @@
     (should (equal hnview-username "alice"))
     (should (equal (cdr (assoc "acct" posted-fields)) "alice"))
     (should (equal (cdr (assoc "pw" posted-fields)) "secret"))))
+
+(ert-deftest hnview-login-error-does-not-set-username ()
+  "Failed login should not update the configured HN username."
+  (let ((hnview-username nil))
+    (cl-letf (((symbol-function 'hnview--post-form)
+               (lambda (_url _fields callback)
+                 (funcall callback "HN rate-limited this request" nil))))
+      (hnview-login "alice" "secret"))
+    (should-not hnview-username)))
 
 (ert-deftest hnview-login-uses-auth-source-credentials ()
   "Interactive login should read credentials from auth-source."

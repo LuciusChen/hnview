@@ -685,6 +685,9 @@ request body."
 (defun hnview--plz-error-message (error)
   "Return a user-facing message for plz ERROR."
   (cond
+   ((and (plz-error-response error)
+         (= (plz-response-status (plz-error-response error)) 429))
+    "HN rate-limited this request (HTTP 429); wait before trying again")
    ((plz-error-message error)
     (plz-error-message error))
    ((plz-error-response error)
@@ -2287,7 +2290,6 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
     (unless (and user secret)
       (user-error
        "No HN credentials found in auth-source for news.ycombinator.com"))
-      (setq hnview-username user)
       (message "Logging in to Hacker News...")
       (hnview--post-form
        (hnview--hn-url "login")
@@ -2296,6 +2298,7 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
          (cond
           (error (message "%s" error))
           ((hnview--login-success-p html user)
+           (setq hnview-username user)
            (message "Logged in to Hacker News as %s" user))
           ((hnview--hn-error-message html)
            (message "%s" (hnview--hn-error-message html)))
