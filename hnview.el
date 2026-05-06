@@ -1095,23 +1095,24 @@ request body."
          (errors nil))
     (cl-loop for url in urls
              for index from 0
-             do (hnview--url-text
-                 url
-                 (lambda (error html)
-                   (cond
-                    (error
-                     (push error errors))
-                    ((hnview--profile-web-list-error html section)
-                     (push (hnview--profile-web-list-error html section)
-                           errors))
-                    (t
-                     (aset pages index html)))
-                   (cl-decf pending)
-                   (when (zerop pending)
-                     (let ((found-pages (delq nil (hnview--vector-list pages))))
-                       (funcall callback
-                                (unless found-pages (car errors))
-                                found-pages))))))))
+             do (let ((page-index index))
+                  (hnview--url-text
+                   url
+                   (lambda (error html)
+                     (cond
+                      (error
+                       (push error errors))
+                      ((hnview--profile-web-list-error html section)
+                       (push (hnview--profile-web-list-error html section)
+                             errors))
+                      (t
+                       (aset pages page-index html)))
+                     (cl-decf pending)
+                     (when (zerop pending)
+                       (let ((found-pages (delq nil (hnview--vector-list pages))))
+                         (funcall callback
+                                  (unless found-pages (car errors))
+                                  found-pages)))))))))
 
 (defun hnview--profile-web-list-item-ids (pages)
   "Return unique HN item ids from profile web list PAGES."

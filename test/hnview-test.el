@@ -416,6 +416,25 @@
     (should (equal result-user '(:id "alice")))
     (should (equal result-items '((:id 10) (:id 11) (:id 12))))))
 
+(ert-deftest hnview-fetch-profile-web-list-handles-async-page-order ()
+  "Profile web list page callbacks should keep their page indexes."
+  (let (callbacks result-error result-pages)
+    (cl-letf (((symbol-function 'hnview--url-text)
+               (lambda (url callback &optional _method _fields)
+                 (push (cons url callback) callbacks))))
+      (let ((hnview-hn-base-url "https://news.ycombinator.com"))
+        (hnview--fetch-profile-web-list-pages
+         "alice" 'favorites
+         (lambda (error pages)
+           (setq result-error error)
+           (setq result-pages pages)))))
+    (should (= (length callbacks) 2))
+    (funcall (cdr (nth 0 callbacks)) nil "<tr class='athing' id='12'></tr>")
+    (funcall (cdr (nth 1 callbacks)) nil "<tr class='athing' id='10'></tr>")
+    (should-not result-error)
+    (should (equal (hnview--profile-web-list-item-ids result-pages)
+                   '(10 12)))))
+
 (ert-deftest hnview-render-profile-omits-section-tabs ()
   "Profile buffers should show the current section in the mode line."
   (with-temp-buffer
