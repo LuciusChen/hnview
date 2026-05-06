@@ -479,6 +479,31 @@
     (should (equal (cdr (assoc "acct" posted-fields)) "alice"))
     (should (equal (cdr (assoc "pw" posted-fields)) "secret"))))
 
+(ert-deftest hnview-auth-source-uses-configured-user-with-secret-only-entry ()
+  "Configured user should pair with an auth-source secret-only entry."
+  (cl-letf (((symbol-function 'auth-source-search)
+             (lambda (&rest args)
+               (should (equal (plist-get args :host)
+                              "news.ycombinator.com"))
+               (should (equal (plist-get args :require) '(:secret)))
+               (list (list :secret "secret")))))
+    (should (equal (hnview--auth-source-credentials "alice")
+                   '("alice" . "secret")))))
+
+(ert-deftest hnview-auth-source-uses-pass-login-field ()
+  "Password-store login field should provide the HN username."
+  (require 'auth-source-pass)
+  (cl-letf (((symbol-function 'auth-source-search)
+             (lambda (&rest _args) nil))
+            ((symbol-function (intern "auth-source-pass--find-match"))
+             (lambda (host user port)
+               (should (equal host "news.ycombinator.com"))
+               (should (null user))
+               (should (null port))
+               '((secret . "secret") ("login" . "alice")))))
+    (should (equal (hnview--auth-source-credentials)
+                   '("alice" . "secret")))))
+
 (ert-deftest hnview-translation-segments-split-story-title-and-text ()
   "Story translation should operate on title and text separately."
   (should (equal (hnview--translation-segments

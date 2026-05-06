@@ -1179,21 +1179,52 @@ REMAINING is a mutable one-item list containing the fetch budget."
      ((string-empty-p action) base)
      (t (concat base "/" action)))))
 
+(defun hnview--auth-source-search-entry (&optional username)
+  "Return an auth-source entry for Hacker News USERNAME."
+  (or (and username
+           (car (auth-source-search :host "news.ycombinator.com"
+                                    :user username
+                                    :require '(:secret)
+                                    :max 1)))
+      (car (auth-source-search :host "news.ycombinator.com"
+                               :require '(:secret)
+                               :max 1))))
+
+(defun hnview--auth-source-pass-data (&optional username)
+  "Return parsed password-store data for Hacker News USERNAME."
+  (when (require 'auth-source-pass nil t)
+    (when-let* ((finder (intern-soft "auth-source-pass--find-match"))
+                ((fboundp finder)))
+      (ignore-errors
+        (funcall finder "news.ycombinator.com" username nil)))))
+
+(defun hnview--auth-source-pass-user (data)
+  "Return the user name from password-store DATA."
+  (or (cdr (assoc "login" data))
+      (cdr (assoc "user" data))
+      (cdr (assoc "username" data))))
+
+(defun hnview--auth-source-secret-value (secret)
+  "Return the value of auth-source SECRET."
+  (if (functionp secret)
+      (funcall secret)
+    secret))
+
 (defun hnview--auth-source-credentials (&optional username)
   "Return Hacker News credentials for USERNAME from auth-source."
-  (when-let* ((entry (car (apply #'auth-source-search
-                                 (append
-                                  (list :host "news.ycombinator.com"
-                                        :require '(:user :secret)
-                                        :max 1)
-                                  (when username
-                                    (list :user username))))))
-              (user (or username (plist-get entry :user)))
-              (secret (plist-get entry :secret)))
-    (cons user
-          (if (functionp secret)
-              (funcall secret)
-            secret))))
+  (let* ((entry (hnview--auth-source-search-entry username))
+         (entry-user (or (plist-get entry :user)
+                         (plist-get entry :login)
+                         (plist-get entry :account)))
+         (entry-secret (plist-get entry :secret))
+         (pass-data (unless (and entry-secret (or username entry-user))
+                      (hnview--auth-source-pass-data username)))
+         (user (or username entry-user
+                   (hnview--auth-source-pass-user pass-data)))
+         (secret (or entry-secret
+                     (cdr (assq 'secret pass-data)))))
+    (when (and user secret)
+      (cons user (hnview--auth-source-secret-value secret)))))
 
 (defun hnview--parse-forms (html)
   "Parse HTML and return form plists."

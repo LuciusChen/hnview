@@ -190,6 +190,13 @@ Example `~/.authinfo.gpg` entry:
 machine news.ycombinator.com login your-hn-username password your-password
 ```
 
+For `pass`, either use `user:`/`username:` or the common `login:` field:
+
+```text
+your-password
+login: your-hn-username
+```
+
 Then:
 
 ```text
