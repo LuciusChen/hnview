@@ -56,8 +56,9 @@
               #'hnview-vote-up))
   (should (eq (lookup-key hnview-feed-mode-map (kbd "1"))
               #'hnview-top))
-  (should (eq (lookup-key hnview-feed-mode-map (kbd "7"))
-              #'hnview-active)))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "6"))
+              #'hnview-active))
+  (should-not (lookup-key hnview-feed-mode-map (kbd "7"))))
 
 (ert-deftest hnview-thread-mode-has-comment-loading-keys ()
   "Thread buffers should expose comment loading commands."

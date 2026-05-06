@@ -237,7 +237,6 @@ original language in the current buffer."
     (show . ("Show" . "showstories"))
     (best . ("Best" . "beststories"))
     (new . ("New" . "newstories"))
-    (jobs . ("Jobs" . "jobstories"))
     (active . ("Active" . nil))))
 
 (defconst hnview--profile-sections
@@ -285,8 +284,7 @@ original language in the current buffer."
     (define-key map (kbd "3") #'hnview-show)
     (define-key map (kbd "4") #'hnview-best)
     (define-key map (kbd "5") #'hnview-new)
-    (define-key map (kbd "6") #'hnview-jobs)
-    (define-key map (kbd "7") #'hnview-active)
+    (define-key map (kbd "6") #'hnview-active)
     (define-key map (kbd "RET") #'hnview-open-thread)
     (define-key map (kbd "o") #'hnview-open-url)
     (define-key map (kbd "e") #'hnview-open-url-eww)
@@ -2610,12 +2608,6 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
   "Open the Hacker News New feed."
   (interactive)
   (hnview-open-feed 'new))
-
-;;;###autoload
-(defun hnview-jobs ()
-  "Open the Hacker News Jobs feed."
-  (interactive)
-  (hnview-open-feed 'jobs))
 
 ;;;###autoload
 (defun hnview-active ()
