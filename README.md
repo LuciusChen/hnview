@@ -82,7 +82,6 @@ In profile buffers:
 | Key | Action |
 | --- | --- |
 | `f` | Switch profile section |
-| `1`-`6` | Open About, Stories, Comments, Favorites, Upvoted, Hidden |
 | `RET` | Open the item at point |
 
 ## Profiles
@@ -101,9 +100,10 @@ M-x hnview-profile
 
 About, Stories, and Comments use the public Hacker News API. Favorites,
 Upvoted, and Hidden use Hacker News web pages through `plz`, so they reuse the
-same SQLite-backed login cookies as reply and voting. Favorites are public when
-HN exposes them for that user; Upvoted and Hidden are normally only available
-for the logged-in user.
+same SQLite-backed login cookies as reply and voting. Favorites and Upvoted
+combine HN's stories and comments pages into one Emacs section. Favorites are
+public when HN exposes them for that user; Upvoted and Hidden are normally only
+available for the logged-in user.
 
 ## Translation
 

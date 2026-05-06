@@ -615,6 +615,10 @@ original language in the current buffer."
   (or (alist-get section hnview--profile-sections)
       (symbol-name section)))
 
+(defun hnview--profile-mode-name (section)
+  "Return profile mode name for SECTION."
+  (format "hnview-profile:%s" (hnview--profile-section-label section)))
+
 (defun hnview--url-json (url callback)
   "Fetch URL as JSON, then call CALLBACK with ERROR and DATA."
   (hnview--request
@@ -1072,28 +1076,66 @@ request body."
 
 (defun hnview--fetch-profile-web-list (username section user callback)
   "Fetch USERNAME profile web list SECTION for USER, then call CALLBACK."
-  (hnview--url-text
-   (hnview--profile-web-list-url username section)
-   (lambda (error html)
-     (cond
-      (error
-       (funcall callback error user nil))
-      ((hnview--profile-web-list-error html section)
-       (funcall callback (hnview--profile-web-list-error html section)
-                user nil))
-      (t
+  (hnview--fetch-profile-web-list-pages
+   username section
+   (lambda (error pages)
+     (if error
+         (funcall callback error user nil)
        (hnview--fetch-items
-        (hnview--take (hnview--parse-hn-list-item-ids html)
+        (hnview--take (hnview--profile-web-list-item-ids pages)
                       hnview-profile-item-limit)
         (lambda (items-error items)
-          (funcall callback items-error user items))))))))
+          (funcall callback items-error user items)))))))
+
+(defun hnview--fetch-profile-web-list-pages (username section callback)
+  "Fetch USERNAME profile web list SECTION pages, then call CALLBACK."
+  (let* ((urls (hnview--profile-web-list-urls username section))
+         (pending (length urls))
+         (pages (make-vector (length urls) nil))
+         (errors nil))
+    (cl-loop for url in urls
+             for index from 0
+             do (hnview--url-text
+                 url
+                 (lambda (error html)
+                   (cond
+                    (error
+                     (push error errors))
+                    ((hnview--profile-web-list-error html section)
+                     (push (hnview--profile-web-list-error html section)
+                           errors))
+                    (t
+                     (aset pages index html)))
+                   (cl-decf pending)
+                   (when (zerop pending)
+                     (let ((found-pages (delq nil (hnview--vector-list pages))))
+                       (funcall callback
+                                (unless found-pages (car errors))
+                                found-pages))))))))
+
+(defun hnview--profile-web-list-item-ids (pages)
+  "Return unique HN item ids from profile web list PAGES."
+  (let (ids)
+    (dolist (page pages)
+      (dolist (id (hnview--parse-hn-list-item-ids page))
+        (unless (member id ids)
+          (push id ids))))
+    (nreverse ids)))
 
 (defun hnview--profile-web-list-url (username section)
   "Return Hacker News web URL for USERNAME profile SECTION."
+  (car (hnview--profile-web-list-urls username section)))
+
+(defun hnview--profile-web-list-urls (username section)
+  "Return Hacker News web URLs for USERNAME profile SECTION."
   (pcase section
-    ('favorites (hnview--hn-url "favorites" `(("id" . ,username))))
-    ('upvoted (hnview--hn-url "upvoted" `(("id" . ,username))))
-    ('hidden (hnview--hn-url "hidden"))
+    ('favorites (list (hnview--hn-url "favorites" `(("id" . ,username)))
+                      (hnview--hn-url
+                       "favorites" `(("id" . ,username) ("comments" . "t")))))
+    ('upvoted (list (hnview--hn-url "upvoted" `(("id" . ,username)))
+                    (hnview--hn-url
+                     "upvoted" `(("id" . ,username) ("comments" . "t")))))
+    ('hidden (list (hnview--hn-url "hidden")))
     (_ (error "Unsupported profile web section: %s" section))))
 
 (defun hnview--profile-web-list-error (html section)
@@ -2052,8 +2094,6 @@ REMAINING is a mutable one-item list containing the fetch budget."
   (let ((inhibit-read-only t))
     (erase-buffer)
     (hnview--render-profile-header)
-    (hnview--render-profile-tabs)
-    (insert "\n")
     (cond
      (hnview--loading-message
       (hnview--insert-line hnview--loading-message 'hnview-loading))
@@ -2085,21 +2125,6 @@ REMAINING is a mutable one-item list containing the fetch budget."
       (when parts
         (hnview--insert-line (string-join parts " • ") 'hnview-meta))))
   (insert "\n"))
-
-(defun hnview--render-profile-tabs ()
-  "Render profile section tabs."
-  (let ((first t))
-    (dolist (section hnview--profile-sections)
-      (unless first
-        (insert "    "))
-      (hnview--insert
-       (cdr section)
-       (if (eq (car section) hnview--profile-section)
-           'hnview-domain
-         'default))
-      (setq first nil))
-    (insert "\n")
-    (hnview--insert-line (make-string 72 ?-) 'hnview-divider)))
 
 (defun hnview--render-profile-about ()
   "Render the current profile about section."
@@ -2444,6 +2469,7 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
     (hnview-profile-mode)
     (setq-local hnview--profile-username username)
     (setq-local hnview--profile-section section)
+    (setq-local mode-name (hnview--profile-mode-name section))
     (setq-local hnview--loading-message
                 (format "Loading %s..."
                         (hnview--profile-section-label section)))
@@ -3015,6 +3041,7 @@ generation is no longer active."
 (define-derived-mode hnview-profile-mode special-mode "hnview-profile"
   "Major mode for hnview profile buffers."
   (setq-local truncate-lines nil)
+  (setq-local mode-name (hnview--profile-mode-name hnview--profile-section))
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
 

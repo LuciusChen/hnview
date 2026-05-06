@@ -99,7 +99,9 @@
 (ert-deftest hnview-profile-section-label-reads-simple-alist ()
   "Profile section labels should read simple section pairs."
   (should (equal (hnview--profile-section-label 'about) "About"))
-  (should (equal (hnview--profile-section-label 'unknown) "unknown")))
+  (should (equal (hnview--profile-section-label 'unknown) "unknown"))
+  (should (equal (hnview--profile-mode-name 'upvoted)
+                 "hnview-profile:Upvoted")))
 
 (ert-deftest hnview-reply-mode-has-compose-keys ()
   "Reply buffers should expose translation and submission commands."
@@ -354,8 +356,14 @@
   (let ((hnview-hn-base-url "https://news.ycombinator.com"))
     (should (equal (hnview--profile-web-list-url "alice" 'favorites)
                    "https://news.ycombinator.com/favorites?id=alice"))
+    (should (equal (hnview--profile-web-list-urls "alice" 'favorites)
+                   '("https://news.ycombinator.com/favorites?id=alice"
+                     "https://news.ycombinator.com/favorites?id=alice&comments=t")))
     (should (equal (hnview--profile-web-list-url "alice" 'upvoted)
                    "https://news.ycombinator.com/upvoted?id=alice"))
+    (should (equal (hnview--profile-web-list-urls "alice" 'upvoted)
+                   '("https://news.ycombinator.com/upvoted?id=alice"
+                     "https://news.ycombinator.com/upvoted?id=alice&comments=t")))
     (should (equal (hnview--profile-web-list-url "alice" 'hidden)
                    "https://news.ycombinator.com/hidden"))))
 
@@ -379,18 +387,20 @@
 
 (ert-deftest hnview-fetch-profile-web-list-parses-and-fetches-items ()
   "Profile web lists should parse HN rows and fetch API items."
-  (let (requested-url requested-ids result-user result-items result-error)
+  (let (requested-urls requested-ids result-user result-items result-error)
     (cl-letf (((symbol-function 'hnview--url-text)
                (lambda (url callback &optional _method _fields)
-                 (setq requested-url url)
+                 (push url requested-urls)
                  (funcall callback
                           nil
-                          "<tr class='athing' id='10'></tr>
-<tr class='athing' id='11'></tr>")))
+                          (if (string-match-p "comments=t" url)
+                              "<tr class='athing comtr' id='12'></tr>"
+                            "<tr class='athing' id='10'></tr>
+<tr class='athing' id='11'></tr>"))))
               ((symbol-function 'hnview--fetch-items)
                (lambda (ids callback)
                  (setq requested-ids ids)
-                 (funcall callback nil '((:id 10) (:id 11))))))
+                 (funcall callback nil '((:id 10) (:id 11) (:id 12))))))
       (let ((hnview-hn-base-url "https://news.ycombinator.com"))
         (hnview--fetch-profile-web-list
          "alice" 'favorites '(:id "alice")
@@ -399,11 +409,26 @@
            (setq result-user user)
            (setq result-items items)))))
     (should-not result-error)
-    (should (equal requested-url
-                   "https://news.ycombinator.com/favorites?id=alice"))
-    (should (equal requested-ids '(10 11)))
+    (should (equal (nreverse requested-urls)
+                   '("https://news.ycombinator.com/favorites?id=alice"
+                     "https://news.ycombinator.com/favorites?id=alice&comments=t")))
+    (should (equal requested-ids '(10 11 12)))
     (should (equal result-user '(:id "alice")))
-    (should (equal result-items '((:id 10) (:id 11))))))
+    (should (equal result-items '((:id 10) (:id 11) (:id 12))))))
+
+(ert-deftest hnview-render-profile-omits-section-tabs ()
+  "Profile buffers should show the current section in the mode line."
+  (with-temp-buffer
+    (hnview-profile-mode)
+    (setq-local hnview--profile-username "alice")
+    (setq-local hnview--profile-section 'upvoted)
+    (setq-local mode-name (hnview--profile-mode-name hnview--profile-section))
+    (setq-local hnview--profile-user '(:id "alice" :created 1000 :karma 1))
+    (setq-local hnview--profile-items nil)
+    (hnview--render-profile)
+    (should (equal mode-name "hnview-profile:Upvoted"))
+    (should-not (string-match-p "About[[:space:]]+Stories"
+                                (buffer-string)))))
 
 (ert-deftest hnview-comment-form-parses-hidden-fields ()
   "Comment form parsing should preserve HN hidden fields."
