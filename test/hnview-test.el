@@ -694,6 +694,87 @@
       (hnview-translate-at-point)
       (should (equal (plist-get (hnview--item-at-point) :id) 2)))))
 
+(ert-deftest hnview-translate-visible-hides-visible-translations ()
+  "T should hide visible translations for every visible item."
+  (let ((first '(:id 1 :type "story" :title "First"))
+        (second '(:id 2 :type "story" :title "Second"))
+        (hnview--translations (make-hash-table :test #'equal))
+        (hnview--state-loaded-p t))
+    (puthash (hnview--translation-key first "First" 'title)
+             "第一" hnview--translations)
+    (puthash (hnview--translation-key second "Second" 'title)
+             "第二" hnview--translations)
+    (with-temp-buffer
+      (hnview-feed-mode)
+      (setq-local hnview--stories (list first second))
+      (hnview--render-feed)
+      (goto-char (point-min))
+      (search-forward "第二")
+      (hnview-translate-visible)
+      (should (hnview--translation-hidden-p first 'title))
+      (should (hnview--translation-hidden-p second 'title))
+      (should (equal (plist-get (hnview--item-at-point) :id) 2))
+      (should (save-excursion
+                (goto-char (point-min))
+                (and (search-forward "First" nil t)
+                     (search-forward "Second" nil t))))
+      (should-not (save-excursion
+                    (goto-char (point-min))
+                    (search-forward "第一" nil t))))))
+
+(ert-deftest hnview-translate-visible-shows-hidden-cached-translations ()
+  "T should show cached translations when all visible translations are hidden."
+  (let ((first '(:id 1 :type "story" :title "First"))
+        (second '(:id 2 :type "story" :title "Second"))
+        (hnview--translations (make-hash-table :test #'equal))
+        (hnview--state-loaded-p t))
+    (puthash (hnview--translation-key first "First" 'title)
+             "第一" hnview--translations)
+    (puthash (hnview--translation-key second "Second" 'title)
+             "第二" hnview--translations)
+    (with-temp-buffer
+      (hnview-feed-mode)
+      (setq-local hnview--stories (list first second))
+      (hnview--set-item-translation-hidden first t)
+      (hnview--set-item-translation-hidden second t)
+      (hnview--render-feed)
+      (goto-char (point-min))
+      (search-forward "Second")
+      (hnview-translate-visible)
+      (should-not (hnview--translation-hidden-p first 'title))
+      (should-not (hnview--translation-hidden-p second 'title))
+      (should (equal (plist-get (hnview--item-at-point) :id) 2))
+      (should (save-excursion
+                (goto-char (point-min))
+                (and (search-forward "第一" nil t)
+                     (search-forward "第二" nil t)))))))
+
+(ert-deftest hnview-translate-visible-schedules-missing-translations ()
+  "T should schedule missing translations instead of starting them inline."
+  (let ((story '(:id 1 :type "story" :title "First"))
+        (hnview--translations (make-hash-table :test #'equal))
+        (hnview--state-loaded-p t)
+        scheduled
+        translated)
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_secs _repeat function &rest args)
+                 (push (lambda () (apply function args)) scheduled)
+                 'timer))
+              ((symbol-function 'hnview--translate-item)
+               (lambda (_item _callback)
+                 (setq translated t))))
+      (with-temp-buffer
+        (hnview-feed-mode)
+        (setq-local hnview--stories (list story))
+        (hnview--render-feed)
+        (goto-char (point-min))
+        (search-forward "First")
+        (hnview-translate-visible)
+        (should scheduled)
+        (should-not translated)
+        (funcall (pop scheduled))
+        (should translated)))))
+
 (ert-deftest hnview-toggle-comment-translation-preserves-body-position ()
   "Toggling comment translation should keep point in the comment body."
   (let* ((comment '(:id 1 :type "comment" :by "alice"

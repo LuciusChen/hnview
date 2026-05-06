@@ -111,7 +111,9 @@ Secondary user:
   - If not translated, start translation.
   - If translated and visible, show original.
   - If translated and hidden, show translation again.
-- `T` translates all visible items.
+- `T` toggles translation for all visible items.
+- Missing translations started by `T` must run asynchronously and must not
+  block normal Emacs interaction.
 - Translation replaces text in place while preserving layout.
 - Toggling translation from any point in a comment should work, including
   paragraph blank lines.
@@ -179,7 +181,7 @@ Secondary user:
 | `u` | feed/thread/inbox | Upvote item |
 | `r` | feed/thread/inbox | Reply |
 | `t` | feed/thread/inbox | Toggle item translation |
-| `T` | feed/thread/inbox | Translate visible items |
+| `T` | feed/thread/inbox | Toggle visible item translations |
 | `TAB` | thread | Fold/unfold comment |
 | `+` | thread | Load more comments |
 | `*` | thread | Load all comments |

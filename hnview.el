@@ -1339,6 +1339,23 @@ REMAINING is a mutable one-item list containing the fetch budget."
                   (not (hnview--translation-hidden-p item (car segment)))))
            (hnview--translation-segments item)))
 
+(defun hnview--active-translation-p (item)
+  "Return non-nil when ITEM is showing translated or pending text."
+  (cl-some (lambda (segment)
+             (pcase-let ((`(,name . ,text) segment))
+               (and (not (hnview--translation-hidden-p item name))
+                    (or (hnview--cached-translation item name text)
+                        (hnview--translation-pending-p item name text)))))
+           (hnview--translation-segments item)))
+
+(defun hnview--needs-translation-p (item)
+  "Return non-nil when ITEM has untranslated, non-pending text."
+  (cl-some (lambda (segment)
+             (pcase-let ((`(,name . ,text) segment))
+               (not (or (hnview--cached-translation item name text)
+                        (hnview--translation-pending-p item name text)))))
+           (hnview--translation-segments item)))
+
 (defun hnview--translate-item (item callback)
   "Translate ITEM, then call CALLBACK with ERROR and TRANSLATION."
   (let ((segments (hnview--translation-segments item)))
@@ -2404,25 +2421,48 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
              (hnview--rerender-current-buffer state)))))))))
 
 (defun hnview-translate-visible ()
-  "Translate visible hnview titles and comments in the current buffer."
+  "Toggle translation for visible hnview titles and comments."
   (interactive)
-  (let ((items (hnview--visible-buffer-items)))
+  (hnview--ensure-state-loaded)
+  (let ((items (hnview--visible-buffer-items))
+        (state (hnview--point-state))
+        (buffer (current-buffer)))
     (unless items
       (user-error "No visible items"))
-    (hnview--translate-items items (current-buffer))))
+    (if (cl-some #'hnview--active-translation-p items)
+        (progn
+          (dolist (item items)
+            (hnview--set-item-translation-hidden item t))
+          (hnview--rerender-current-buffer state))
+      (dolist (item items)
+        (hnview--set-item-translation-hidden item nil))
+      (hnview--rerender-current-buffer state)
+      (when-let* ((pending-items
+                   (cl-remove-if-not #'hnview--needs-translation-p items)))
+        (hnview--translate-items pending-items buffer state)))))
 
-(defun hnview--translate-items (items buffer)
-  "Translate ITEMS and rerender BUFFER as translations arrive."
-  (dolist (item items)
-    (hnview--set-item-translation-hidden item nil)
-    (hnview--translate-item
-     item
-     (lambda (error _translation)
-       (when error
-         (message "%s" error))
-       (when (buffer-live-p buffer)
-         (with-current-buffer buffer
-           (hnview--rerender-current-buffer t)))))))
+(defun hnview--translate-items (items buffer &optional point-state)
+  "Translate ITEMS for BUFFER without blocking the current command.
+When POINT-STATE is non-nil, use it while rerendering BUFFER."
+  (let ((queue (copy-sequence items)))
+    (cl-labels
+        ((step ()
+           (when (and queue (buffer-live-p buffer))
+             (let ((item (pop queue)))
+               (with-current-buffer buffer
+                 (hnview--set-item-translation-hidden item nil))
+               (hnview--translate-item
+                item
+                (lambda (error _translation)
+                  (when error
+                    (message "%s" error))
+                  (when (buffer-live-p buffer)
+                    (with-current-buffer buffer
+                      (hnview--rerender-current-buffer
+                       (or point-state t)))))))
+             (when queue
+               (run-at-time 0 nil #'step)))))
+      (run-at-time 0 nil #'step))))
 
 (defun hnview--maybe-auto-translate (buffer)
   "Auto-translate BUFFER when enabled."

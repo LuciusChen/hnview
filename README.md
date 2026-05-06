@@ -69,7 +69,7 @@ Key bindings:
 | `r` | Compose a reply to the story or comment at point |
 | `u` | Upvote the story or comment at point |
 | `t` | Toggle translation at point, translating first if needed |
-| `T` | Translate all visible titles and comments |
+| `T` | Toggle translation for all visible titles and comments |
 | `TAB` | Toggle comment folding |
 | `+` | Load more comments in a thread |
 | `*` | Load all comments in a thread |
@@ -96,11 +96,13 @@ Optional automatic translation:
 ```
 
 Press `t` to toggle translation for the item at point, translating it first if
-needed. Press `T` to translate all visible titles and comments. Translated text
-replaces the original text in place and keeps the existing story/comment layout:
-metadata, status markers, indentation, and comment hierarchy stay unchanged.
-Successful translations are cached in the SQLite database at
-`hnview-database-file`.
+needed. Press `T` to toggle translation for all visible titles and comments:
+when any visible translation is active it switches visible items back to the
+original text; otherwise it shows cached translations and starts missing
+translations asynchronously. Translated text replaces the original text in
+place and keeps the existing story/comment layout: metadata, status markers,
+indentation, and comment hierarchy stay unchanged. Successful translations are
+cached in the SQLite database at `hnview-database-file`.
 
 Upvoting uses Hacker News' logged-in vote endpoint. Run `M-x hnview-login`
 first. After a successful `u` vote, hnview shows `△` as a session-local status
