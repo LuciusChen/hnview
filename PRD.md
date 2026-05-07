@@ -110,6 +110,9 @@ Secondary user:
 - Use `llm.el` as the provider-neutral LLM transport.
 - Allow `hnview-llm-provider` to be either a provider object or a provider
   factory function.
+- Provide a customizable translation prompt template through
+  `hnview-translation-prompt-template`; the default prompt should favor
+  natural, idiomatic Simplified Chinese for technical readers.
 - Translate titles, story text, and comments.
 - `hnview-translate-by-default` enables translated display and asynchronous
   missing translation requests by default across hnview buffers.
@@ -125,6 +128,8 @@ Secondary user:
   paragraph blank lines.
 - Toggling translation should preserve point within the current item.
 - Successful translations are cached in SQLite.
+- Translation cache keys include the prompt template so changed translation
+  style settings do not reuse older cached wording.
 - Translation display overrides are buffer/session-local; cached translations
   are persistent and do not force translated display unless global translated
   display is enabled.

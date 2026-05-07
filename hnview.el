@@ -62,6 +62,23 @@
   :type 'string
   :group 'hnview)
 
+(defcustom hnview-translation-prompt-template
+  "Translate Hacker News text into {{target}}.
+
+When the target language is Chinese, write natural, idiomatic Simplified
+Chinese for technical readers.  Do not preserve English sentence order when
+it sounds unnatural.  Prefer concise Chinese phrasing while keeping the
+original meaning, tone, and technical precision.
+
+Preserve code, URLs, commands, identifiers, product names, paragraph breaks,
+Markdown-like structure, quote markers, and technical terms when appropriate.
+Return only the translation."
+  "Prompt template used for Hacker News text translation.
+The literal token `{{target}}' is replaced with
+`hnview-translate-target-language' before calling the LLM provider."
+  :type 'string
+  :group 'hnview)
+
 (defcustom hnview-auto-translate-feed nil
   "Whether to automatically translate feed stories after loading."
   :type 'boolean
@@ -1678,9 +1695,10 @@ REMAINING is a mutable one-item list containing the fetch budget."
 
 (defun hnview--translation-key (item text &optional segment)
   "Return cache key for ITEM, TEXT, and SEGMENT."
-  (format "%s:%s:%s:%s"
+  (format "%s:%s:%s:%s:%s"
           hnview-translate-backend
           hnview-translate-target-language
+          (secure-hash 'sha1 hnview-translation-prompt-template)
           (format "%s:%s" (or (plist-get item :id) "region")
                   (or segment 'item))
           (secure-hash 'sha1 text)))
@@ -1952,9 +1970,9 @@ REMAINING is a mutable one-item list containing the fetch budget."
 
 (defun hnview--translation-system-prompt (&optional target-language)
   "Return the system prompt for translation to TARGET-LANGUAGE."
-  (format
-   "Translate Hacker News text into %s. Preserve code, URLs, paragraph breaks, Markdown-like structure, quotes, and technical terms when appropriate. Return only the translation."
-   (or target-language hnview-translate-target-language)))
+  (string-replace "{{target}}"
+                  (or target-language hnview-translate-target-language)
+                  hnview-translation-prompt-template))
 
 ;;; Rendering helpers
 

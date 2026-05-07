@@ -1353,10 +1353,31 @@
          (setq error err)
          (setq result translation))))
     (should (equal called '("source" (:context
-                                     "Translate Hacker News text into zh-CN. Preserve code, URLs, paragraph breaks, Markdown-like structure, quotes, and technical terms when appropriate. Return only the translation."
+                                     "Translate Hacker News text into zh-CN.\n\nWhen the target language is Chinese, write natural, idiomatic Simplified\nChinese for technical readers.  Do not preserve English sentence order when\nit sounds unnatural.  Prefer concise Chinese phrasing while keeping the\noriginal meaning, tone, and technical precision.\n\nPreserve code, URLs, commands, identifiers, product names, paragraph breaks,\nMarkdown-like structure, quote markers, and technical terms when appropriate.\nReturn only the translation."
                                      :temperature 0.1))))
     (should-not error)
     (should (equal result "translated"))))
+
+(ert-deftest hnview-translation-system-prompt-supports-template ()
+  "Translation prompt should be customizable."
+  (let ((hnview-translation-prompt-template
+         "Translate into {{target}} with idiomatic phrasing.")
+        (hnview-translate-target-language "zh-CN"))
+    (should (equal (hnview--translation-system-prompt)
+                   "Translate into zh-CN with idiomatic phrasing."))
+    (should (equal (hnview--translation-system-prompt "Japanese")
+                   "Translate into Japanese with idiomatic phrasing."))))
+
+(ert-deftest hnview-translation-key-includes-prompt-template ()
+  "Translation cache keys should change when the prompt template changes."
+  (let* ((item '(:id 42))
+         (hnview-translate-backend 'llm)
+         (hnview-translate-target-language "zh-CN")
+         (hnview-translation-prompt-template "Prompt A {{target}}")
+         (first-key (hnview--translation-key item "source" 'title)))
+    (let ((hnview-translation-prompt-template "Prompt B {{target}}"))
+      (should-not (equal first-key
+                         (hnview--translation-key item "source" 'title))))))
 
 (ert-deftest hnview-translate-text-llm-supports-provider-factory ()
   "LLM translation should accept a provider factory function."

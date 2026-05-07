@@ -120,6 +120,22 @@ Configure any `llm.el` provider in your Emacs config, then set:
 (setq hnview-translate-target-language "zh-CN")
 ```
 
+The translation style prompt is customizable.  `{{target}}` is replaced with
+`hnview-translate-target-language`:
+
+```elisp
+(setq hnview-translation-prompt-template
+      "Translate Hacker News text into {{target}}.
+
+Use natural, idiomatic Simplified Chinese for technical readers. Keep code,
+URLs, commands, identifiers, product names, paragraph breaks, and quote
+markers unchanged when appropriate. Return only the translation.")
+```
+
+Changing this prompt changes the translation cache key, so new translations use
+the new style while older cached rows remain available until normal cache
+pruning or `M-x hnview-clear-translation-cache`.
+
 Optional automatic translation:
 
 ```elisp
