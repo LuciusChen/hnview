@@ -63,20 +63,41 @@
   :group 'hnview)
 
 (defcustom hnview-translation-prompt-template
-  "Translate Hacker News text into {{target}}.
+  "You are a professional technical translator for Hacker News.
 
-When the target language is Chinese, write natural, idiomatic Simplified
-Chinese for technical readers.  Do not preserve English sentence order when
-it sounds unnatural.  Prefer concise Chinese phrasing while keeping the
-original meaning, tone, and technical precision.
+Translate the input into {{target}}.
 
-Preserve code, URLs, commands, identifiers, product names, paragraph breaks,
-Markdown-like structure, quote markers, and technical terms when appropriate.
+Requirements:
+- Preserve the original meaning, stance, uncertainty, and casual discussion
+  tone.
+- For Chinese, write natural, idiomatic Simplified Chinese for experienced
+  software engineers.  Do not preserve English sentence order when it sounds
+  unnatural.
+- Prefer concise Chinese phrasing.  Split long English sentences when that
+  improves readability.
+- Preserve code, commands, URLs, file paths, identifiers, API names, product
+  names, quoted text, Markdown-like structure, paragraph breaks, and list
+  structure.
+- Keep widely used technical terms in English when Chinese translation would
+  sound forced.
+- Translate comments as forum comments, not formal documentation.
+- Do not add explanations, notes, summaries, or Markdown fences.
+
+{{glossary}}
 Return only the translation."
   "Prompt template used for Hacker News text translation.
-The literal token `{{target}}' is replaced with
-`hnview-translate-target-language' before calling the LLM provider."
+The token `{{target}}' is replaced with
+`hnview-translate-target-language'.  The token `{{glossary}}' is replaced
+with `hnview-translation-glossary' rendered as prompt text."
   :type 'string
+  :group 'hnview)
+
+(defcustom hnview-translation-glossary nil
+  "Preferred terminology for Hacker News translation.
+Each entry maps a source term to its preferred target-language rendering.
+Use identical source and target strings for terms that should stay unchanged."
+  :type '(repeat (cons (string :tag "Source term")
+                       (string :tag "Preferred rendering")))
   :group 'hnview)
 
 (defcustom hnview-auto-translate-feed nil
@@ -1698,10 +1719,18 @@ REMAINING is a mutable one-item list containing the fetch budget."
   (format "%s:%s:%s:%s:%s"
           hnview-translate-backend
           hnview-translate-target-language
-          (secure-hash 'sha1 hnview-translation-prompt-template)
+          (hnview--translation-style-hash)
           (format "%s:%s" (or (plist-get item :id) "region")
                   (or segment 'item))
           (secure-hash 'sha1 text)))
+
+(defun hnview--translation-style-hash ()
+  "Return a hash for translation style settings."
+  (secure-hash
+   'sha1
+   (prin1-to-string
+    (list hnview-translation-prompt-template
+          hnview-translation-glossary))))
 
 (defun hnview--translation-source-hash (text)
   "Return source hash for translation TEXT."
@@ -1970,9 +1999,45 @@ REMAINING is a mutable one-item list containing the fetch budget."
 
 (defun hnview--translation-system-prompt (&optional target-language)
   "Return the system prompt for translation to TARGET-LANGUAGE."
-  (string-replace "{{target}}"
+  (let* ((glossary (hnview--translation-glossary-prompt))
+         (prompt (string-replace
+                  "{{target}}"
                   (or target-language hnview-translate-target-language)
-                  hnview-translation-prompt-template))
+                  hnview-translation-prompt-template)))
+    (if (string-match-p (regexp-quote "{{glossary}}") prompt)
+        (string-replace "{{glossary}}" glossary prompt)
+      (string-join (delq nil (list prompt
+                                   (unless (string-empty-p glossary)
+                                     glossary)))
+                   "\n\n"))))
+
+(defun hnview--translation-glossary-prompt ()
+  "Return a prompt fragment for `hnview-translation-glossary'."
+  (let ((lines (delq nil
+                     (mapcar #'hnview--translation-glossary-entry-prompt
+                             hnview-translation-glossary))))
+    (if lines
+        (concat "Glossary:\n" (string-join lines "\n"))
+      "")))
+
+(defun hnview--translation-glossary-entry-prompt (entry)
+  "Return a prompt line for glossary ENTRY."
+  (let* ((source (car-safe entry))
+         (target (cdr-safe entry))
+         (target (if (and (consp target) (null (cdr target)))
+                     (car target)
+                   target)))
+    (when (and (stringp source)
+               (not (string-empty-p source))
+               (stringp target)
+               (not (string-empty-p target)))
+      (format "- %s => %s"
+              (hnview--translation-glossary-one-line source)
+              (hnview--translation-glossary-one-line target)))))
+
+(defun hnview--translation-glossary-one-line (text)
+  "Return TEXT collapsed to one line for prompt glossary use."
+  (string-trim (replace-regexp-in-string "[\n\r]+" " " text)))
 
 ;;; Rendering helpers
 

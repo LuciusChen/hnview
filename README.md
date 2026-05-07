@@ -121,20 +121,38 @@ Configure any `llm.el` provider in your Emacs config, then set:
 ```
 
 The translation style prompt is customizable.  `{{target}}` is replaced with
-`hnview-translate-target-language`:
+`hnview-translate-target-language`, and `{{glossary}}` is replaced with the
+configured glossary:
 
 ```elisp
 (setq hnview-translation-prompt-template
-      "Translate Hacker News text into {{target}}.
+      "You are a professional technical translator for Hacker News.
 
-Use natural, idiomatic Simplified Chinese for technical readers. Keep code,
-URLs, commands, identifiers, product names, paragraph breaks, and quote
-markers unchanged when appropriate. Return only the translation.")
+Translate the input into {{target}}.
+
+Use natural, idiomatic Simplified Chinese for software engineers. Keep code,
+URLs, commands, identifiers, product names, paragraph breaks, quote markers,
+and forum tone. Apply this glossary:
+
+{{glossary}}
+
+Return only the translation.")
 ```
 
-Changing this prompt changes the translation cache key, so new translations use
-the new style while older cached rows remain available until normal cache
-pruning or `M-x hnview-clear-translation-cache`.
+Optional preferred terminology:
+
+```elisp
+(setq hnview-translation-glossary
+      '(("runtime" . "运行时")
+        ("latency" . "延迟")
+        ("API" . "API")
+        ("PR" . "PR")
+        ("prompt" . "提示词")))
+```
+
+Changing this prompt or glossary changes the translation cache key, so new
+translations use the new style while older cached rows remain available until
+normal cache pruning or `M-x hnview-clear-translation-cache`.
 
 Optional automatic translation:
 

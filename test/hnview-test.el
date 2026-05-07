@@ -1352,9 +1352,15 @@
        (lambda (err translation)
          (setq error err)
          (setq result translation))))
-    (should (equal called '("source" (:context
-                                     "Translate Hacker News text into zh-CN.\n\nWhen the target language is Chinese, write natural, idiomatic Simplified\nChinese for technical readers.  Do not preserve English sentence order when\nit sounds unnatural.  Prefer concise Chinese phrasing while keeping the\noriginal meaning, tone, and technical precision.\n\nPreserve code, URLs, commands, identifiers, product names, paragraph breaks,\nMarkdown-like structure, quote markers, and technical terms when appropriate.\nReturn only the translation."
-                                     :temperature 0.1))))
+    (pcase-let ((`("source" (:context ,context :temperature 0.1)) called))
+      (should (string-match-p
+               "professional technical translator for Hacker News"
+               context))
+      (should (string-match-p
+               "natural, idiomatic Simplified Chinese"
+               context))
+      (should (string-match-p "Return only the translation" context))
+      (should-not (string-match-p "{{glossary}}" context)))
     (should-not error)
     (should (equal result "translated"))))
 
@@ -1368,6 +1374,23 @@
     (should (equal (hnview--translation-system-prompt "Japanese")
                    "Translate into Japanese with idiomatic phrasing."))))
 
+(ert-deftest hnview-translation-system-prompt-renders-glossary ()
+  "Translation prompt should render the configured glossary."
+  (let ((hnview-translation-prompt-template
+         "Translate into {{target}}.\n\n{{glossary}}\n\nReturn only.")
+        (hnview-translation-glossary
+         '(("runtime" . "运行时")
+           ("API" . "API"))))
+    (should (equal (hnview--translation-system-prompt)
+                   "Translate into zh-CN.\n\nGlossary:\n- runtime => 运行时\n- API => API\n\nReturn only."))))
+
+(ert-deftest hnview-translation-system-prompt-appends-glossary ()
+  "Translation prompt should append glossary when template omits its token."
+  (let ((hnview-translation-prompt-template "Translate into {{target}}.")
+        (hnview-translation-glossary '(("latency" . "延迟"))))
+    (should (equal (hnview--translation-system-prompt)
+                   "Translate into zh-CN.\n\nGlossary:\n- latency => 延迟"))))
+
 (ert-deftest hnview-translation-key-includes-prompt-template ()
   "Translation cache keys should change when the prompt template changes."
   (let* ((item '(:id 42))
@@ -1376,6 +1399,18 @@
          (hnview-translation-prompt-template "Prompt A {{target}}")
          (first-key (hnview--translation-key item "source" 'title)))
     (let ((hnview-translation-prompt-template "Prompt B {{target}}"))
+      (should-not (equal first-key
+                         (hnview--translation-key item "source" 'title))))))
+
+(ert-deftest hnview-translation-key-includes-glossary ()
+  "Translation cache keys should change when the glossary changes."
+  (let* ((item '(:id 42))
+         (hnview-translate-backend 'llm)
+         (hnview-translate-target-language "zh-CN")
+         (hnview-translation-prompt-template "Prompt {{target}}")
+         (hnview-translation-glossary '(("runtime" . "运行时")))
+         (first-key (hnview--translation-key item "source" 'title)))
+    (let ((hnview-translation-glossary '(("runtime" . "runtime"))))
       (should-not (equal first-key
                          (hnview--translation-key item "source" 'title))))))
 

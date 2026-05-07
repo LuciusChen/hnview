@@ -113,6 +113,8 @@ Secondary user:
 - Provide a customizable translation prompt template through
   `hnview-translation-prompt-template`; the default prompt should favor
   natural, idiomatic Simplified Chinese for technical readers.
+- Provide `hnview-translation-glossary` for preferred technical terminology
+  and render it into the translation prompt.
 - Translate titles, story text, and comments.
 - `hnview-translate-by-default` enables translated display and asynchronous
   missing translation requests by default across hnview buffers.
@@ -128,8 +130,8 @@ Secondary user:
   paragraph blank lines.
 - Toggling translation should preserve point within the current item.
 - Successful translations are cached in SQLite.
-- Translation cache keys include the prompt template so changed translation
-  style settings do not reuse older cached wording.
+- Translation cache keys include the prompt template and glossary so changed
+  translation style settings do not reuse older cached wording.
 - Translation display overrides are buffer/session-local; cached translations
   are persistent and do not force translated display unless global translated
   display is enabled.
