@@ -126,6 +126,8 @@ Secondary user:
 - Missing translations started by `T` must run asynchronously and must not
   block normal Emacs interaction.
 - Translation replaces text in place while preserving layout.
+- Pending translations should keep original text visible and report progress
+  in the mode line instead of inserting inline loading text.
 - Toggling translation from any point in a comment should work, including
   paragraph blank lines.
 - Toggling translation should preserve point within the current item.

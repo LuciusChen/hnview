@@ -1779,7 +1779,7 @@ REMAINING is a mutable one-item list containing the fetch budget."
            (hnview--translation-segments item)))
 
 (defun hnview--active-translation-p (item)
-  "Return non-nil when ITEM is showing translated or pending text."
+  "Return non-nil when ITEM has visible or pending translation state."
   (cl-some (lambda (segment)
              (pcase-let ((`(,name . ,text) segment))
                (and (hnview--translation-visible-state-p item name)
@@ -1828,10 +1828,12 @@ REMAINING is a mutable one-item list containing the fetch budget."
   "Translate ITEM SEGMENT TEXT, then call CALLBACK."
   (let ((key (hnview--translation-key item text segment)))
     (puthash key t hnview--pending-translations)
+    (force-mode-line-update t)
     (hnview--translate-text
      text
        (lambda (error translation)
          (remhash key hnview--pending-translations)
+         (force-mode-line-update t)
          (when translation
            (puthash key translation hnview--translations)
            (hnview--persist-translation item segment text translation))
@@ -2106,9 +2108,7 @@ REMAINING is a mutable one-item list containing the fetch budget."
      (translation
       (hnview--insert-translated-lines item translation indent face))
      ((and visible (hnview--translation-pending-p item segment source))
-      (insert (make-string indent ?\s))
-      (hnview--insert-line "Translating..." 'hnview-loading
-                            'hnview-item item))
+      (hnview--insert-source-lines item source indent face))
      (t
       (hnview--insert-source-lines item source indent face)))))
 
@@ -2910,6 +2910,27 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
   (setq-local mode-name (format "hnview %s" context))
   (force-mode-line-update))
 
+(defun hnview--enable-translation-mode-line ()
+  "Show pending translation state in this buffer's mode line."
+  (setq-local mode-line-process
+              '(:eval (hnview--translation-mode-line-status))))
+
+(defun hnview--translation-mode-line-status ()
+  "Return mode line text for pending translations in this buffer."
+  (let ((count (hnview--buffer-pending-translation-count)))
+    (when (> count 0)
+      (format " Translating:%d" count))))
+
+(defun hnview--buffer-pending-translation-count ()
+  "Return the number of pending translation segments visible in this buffer."
+  (let ((count 0))
+    (dolist (item (hnview--visible-buffer-items))
+      (dolist (segment (hnview--translation-segments item))
+        (pcase-let ((`(,name . ,text) segment))
+          (when (hnview--translation-pending-p item name text)
+            (cl-incf count)))))
+    count))
+
 (defun hnview-toggle-bookmark ()
   "Toggle bookmark for the item at point."
   (interactive)
@@ -3203,18 +3224,21 @@ generation is no longer active."
 (define-derived-mode hnview-feed-mode special-mode "hnview-feed"
   "Major mode for hnview feed buffers."
   (setq-local truncate-lines t)
+  (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
 
 (define-derived-mode hnview-thread-mode special-mode "hnview-thread"
   "Major mode for hnview thread buffers."
   (setq-local truncate-lines nil)
+  (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
 
 (define-derived-mode hnview-inbox-mode special-mode "hnview-inbox"
   "Major mode for hnview inbox buffers."
   (setq-local truncate-lines nil)
+  (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
 
@@ -3222,6 +3246,7 @@ generation is no longer active."
   "Major mode for hnview profile buffers."
   (setq-local truncate-lines nil)
   (setq-local mode-name (hnview--profile-mode-name hnview--profile-section))
+  (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
 

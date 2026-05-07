@@ -738,6 +738,33 @@
     (should (equal (buffer-string)
                    "    first line second line\n\n    third line\n"))))
 
+(ert-deftest hnview-pending-translation-keeps-source-visible ()
+  "Pending translation should not replace source text with status text."
+  (let ((item '(:id 1 :type "comment" :text "hello world"))
+        (hnview--pending-translations (make-hash-table :test #'equal)))
+    (puthash (hnview--translation-key item "hello world" 'text)
+             t hnview--pending-translations)
+    (with-temp-buffer
+      (setq-local hnview--hidden-translations
+                  (make-hash-table :test #'equal))
+      (hnview--set-translation-hidden item 'text nil)
+      (hnview--insert-text-segment item 'text "hello world" 2 'default)
+      (should (equal (buffer-string) "  hello world\n"))
+      (should-not (string-match-p "Translating" (buffer-string))))))
+
+(ert-deftest hnview-translation-mode-line-shows-pending-count ()
+  "Mode line should show pending translation count."
+  (let ((story '(:id 1 :type "story" :title "First"))
+        (hnview--pending-translations (make-hash-table :test #'equal)))
+    (puthash (hnview--translation-key story "First" 'title)
+             t hnview--pending-translations)
+    (with-temp-buffer
+      (hnview-feed-mode)
+      (let ((inhibit-read-only t))
+        (hnview--insert-title-segment story "First"))
+      (should (equal (hnview--translation-mode-line-status)
+                     " Translating:1")))))
+
 (ert-deftest hnview-comment-quote-lines-render-as-quotes ()
   "Comment quote markers should render as quote blocks."
   (with-temp-buffer
