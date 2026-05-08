@@ -1741,10 +1741,18 @@ REMAINING is a mutable one-item list containing the fetch budget."
   "Return source hash for translation TEXT."
   (secure-hash 'sha1 text))
 
+(defun hnview--usable-translation (translation)
+  "Return normalized TRANSLATION when it has visible text."
+  (when (stringp translation)
+    (let ((trimmed (string-trim translation)))
+      (unless (string-empty-p trimmed)
+        trimmed))))
+
 (defun hnview--cached-translation (item segment text)
   "Return cached translation for ITEM SEGMENT and TEXT, if any."
   (let ((key (hnview--translation-key item text segment)))
-    (when-let* ((translation (gethash key hnview--translations)))
+    (when-let* ((translation (gethash key hnview--translations))
+                (translation (hnview--usable-translation translation)))
       (hnview--touch-translation key)
       translation)))
 
@@ -1839,6 +1847,9 @@ REMAINING is a mutable one-item list containing the fetch budget."
        (lambda (error translation)
          (remhash key hnview--pending-translations)
          (force-mode-line-update t)
+         (setq translation (hnview--usable-translation translation))
+         (when (and (not error) (null translation))
+           (setq error "Translation returned empty text"))
          (when translation
            (puthash key translation hnview--translations)
            (hnview--persist-translation item segment text translation))

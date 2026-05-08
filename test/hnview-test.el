@@ -168,6 +168,46 @@
       (should (equal (hnview--cached-translation story 'title "A title")
                      "一个标题")))))
 
+(ert-deftest hnview-cached-translation-ignores-empty-text ()
+  "Empty cached translations should not replace source text."
+  (let ((story '(:id 42 :type "story" :title "A title"))
+        (hnview--translations (make-hash-table :test #'equal)))
+    (puthash (hnview--translation-key story "A title" 'title)
+             "  \n " hnview--translations)
+    (should-not (hnview--cached-translation story 'title "A title"))))
+
+(ert-deftest hnview-translate-segment-does-not-cache-empty-text ()
+  "Empty translation results should be reported and left uncached."
+  (let ((story '(:id 42 :type "story" :title "A title"))
+        (hnview--translations (make-hash-table :test #'equal))
+        (hnview--pending-translations (make-hash-table :test #'equal))
+        error
+        result)
+    (cl-letf (((symbol-function 'hnview--translate-text)
+               (lambda (_text callback &optional _target-language)
+                 (funcall callback nil "  \n "))))
+      (hnview--translate-segment
+       story 'title "A title"
+       (lambda (err translation)
+         (setq error err)
+         (setq result translation))))
+    (should (equal error "Translation returned empty text"))
+    (should-not result)
+    (should-not (hnview--cached-translation story 'title "A title"))))
+
+(ert-deftest hnview-empty-translation-renders-source-text ()
+  "Empty cached translations should render the source text."
+  (let ((story '(:id 42 :type "story" :title "A title"))
+        (hnview--translations (make-hash-table :test #'equal))
+        (hnview--hidden-translations (make-hash-table :test #'equal))
+        (hnview-translate-by-default t))
+    (puthash (hnview--translation-key story "A title" 'title)
+             "" hnview--translations)
+    (with-temp-buffer
+      (hnview--insert-story story 1)
+      (goto-char (point-min))
+      (should (search-forward "A title" nil t)))))
+
 (ert-deftest hnview-sqlite-prune-removes-old-cache ()
   "Pruning should remove expired translation cache rows."
   (hnview-test-with-db
