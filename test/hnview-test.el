@@ -844,6 +844,49 @@
                 'hnview-quote))
     (should-not (search-forward "> quoted" nil t))))
 
+(ert-deftest hnview-url-display-label-shortens-known-hosts ()
+  "Known URL hosts should render as readable labels."
+  (should (equal
+           (hnview--url-display-label
+            "https://github.com/kitft/natural_language_autoencoders")
+           "GitHub · kitft/natural_language_autoencoders"))
+  (should (equal
+           (hnview--url-display-label
+            "https://huggingface.co/collections/kitft/nla-models")
+           "Hugging Face · kitft/nla-models")))
+
+(ert-deftest hnview-inline-urls-render-as-compact-buttons ()
+  "Inline URLs should keep layout while displaying compact labels."
+  (let ((item '(:id 1 :type "comment")))
+    (with-temp-buffer
+      (hnview--insert-source-lines
+       item
+       "See https://github.com/kitft/natural_language_autoencoders and https://huggingface.co/collections/kitft/nla-models."
+       0 'default)
+      (should-not (search-forward
+                   "https://github.com/kitft/natural_language_autoencoders"
+                   nil t))
+      (goto-char (point-min))
+      (should (search-forward
+               "GitHub · kitft/natural_language_autoencoders"
+               nil t))
+      (should (equal
+               (button-get (button-at (match-beginning 0)) 'hnview-url)
+               "https://github.com/kitft/natural_language_autoencoders"))
+      (should (search-forward "Hugging Face · kitft/nla-models." nil t)))))
+
+(ert-deftest hnview-inline-url-rendering-matches-translations ()
+  "Source and translated text should render inline URLs consistently."
+  (let ((item '(:id 1 :type "comment"))
+        (text "Code https://github.com/kitft/natural_language_autoencoders"))
+    (should (equal
+             (with-temp-buffer
+               (hnview--insert-source-lines item text 0 'default)
+               (buffer-string))
+             (with-temp-buffer
+               (hnview--insert-translated-lines item text 0 'default)
+               (buffer-string))))))
+
 (ert-deftest hnview-insert-story-adds-item-property ()
   "Rendered stories should carry the hnview item text property."
   (let ((story '(:id 42 :type "story" :title "A title"

@@ -104,6 +104,8 @@ Secondary user:
 - Render HN quote lines that begin with `>` as quote blocks using
   `hnview-quote-symbol`.
 - Use orange author names matching the story domain face.
+- Render inline URLs as compact buttons with readable domain/path labels while
+  preserving original paragraph layout in source and translated text.
 
 ### 6.4 Translation
 

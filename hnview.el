@@ -2181,7 +2181,82 @@ TARGET-LANGUAGE is passed to `hnview--translate-text'.  RETRIES overrides
                          'hnview-quote 'hnview-item item)
         (hnview--insert-line quote 'hnview-quote 'hnview-item item))
     (insert (make-string indent ?\s))
-    (hnview--insert-line line face 'hnview-item item)))
+    (hnview--insert-inline-text line face item)
+    (insert "\n")))
+
+(defconst hnview--url-regexp "https?://[^[:space:]<>\"]+"
+  "Regular expression matching inline URLs in rendered text.")
+
+(defun hnview--insert-inline-text (text face item)
+  "Insert TEXT with FACE and ITEM, compacting inline URLs."
+  (let ((start 0))
+    (while (string-match hnview--url-regexp text start)
+      (let ((match-start (match-beginning 0))
+            (match-end (match-end 0))
+            (raw-url (match-string 0 text)))
+        (hnview--insert (substring text start match-start)
+                         face 'hnview-item item)
+        (pcase-let ((`(,url . ,suffix)
+                     (hnview--split-url-trailing-text raw-url)))
+          (hnview--insert-url-button url item)
+          (hnview--insert suffix face 'hnview-item item))
+        (setq start match-end)))
+    (hnview--insert (substring text start) face 'hnview-item item)))
+
+(defun hnview--split-url-trailing-text (url)
+  "Return URL without trailing punctuation paired with removed text."
+  (let ((end (length url)))
+    (while (and (> end 0)
+                (member (aref url (1- end)) '(?. ?, ?\; ?: ?! ?? ?\) ?\] ?\})))
+      (cl-decf end))
+    (cons (substring url 0 end)
+          (substring url end))))
+
+(defun hnview--insert-url-button (url item)
+  "Insert compact URL button for URL and ITEM."
+  (insert-text-button
+   (hnview--url-display-label url)
+   'action #'hnview--url-button-action
+   'follow-link t
+   'help-echo url
+   'face 'hnview-domain
+   'mouse-face 'highlight
+   'hnview-url url
+   'hnview-item item))
+
+(defun hnview--url-button-action (button)
+  "Open the URL stored on BUTTON."
+  (browse-url (button-get button 'hnview-url)))
+
+(defun hnview--url-display-label (url)
+  "Return compact display label for URL."
+  (condition-case nil
+      (let* ((host (string-remove-prefix "www." (hnview--url-host url)))
+             (path (string-remove-prefix "/" (hnview--url-path url)))
+             (path (string-remove-suffix "/" path)))
+        (cond
+         ((and (string= host "github.com")
+               (not (string-empty-p path)))
+          (format "GitHub · %s" (hnview--compact-url-path path)))
+         ((and (string= host "huggingface.co")
+               (not (string-empty-p path)))
+          (format "Hugging Face · %s"
+                  (hnview--compact-url-path
+                   (string-remove-prefix "collections/" path))))
+         ((string-empty-p path)
+          host)
+         (t
+          (format "%s/%s" host (hnview--compact-url-path path)))))
+    (error url)))
+
+(defun hnview--compact-url-path (path)
+  "Return compact display PATH for inline URLs."
+  (let ((path (string-remove-suffix "/" path)))
+    (if (> (length path) 72)
+        (format "%s...%s"
+                (substring path 0 34)
+                (substring path (- (length path) 34)))
+      path)))
 
 (defun hnview--quote-line-text (line)
   "Return LINE without quote prefix, or nil when LINE is not a quote."

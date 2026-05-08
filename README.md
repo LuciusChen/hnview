@@ -11,6 +11,7 @@ keyboard-first navigation.
   sub-sections where HN exposes them.
 - Open story threads inside Emacs.
 - Render nested comments with compact fold and vote status markers.
+- Render inline URLs as compact buttons while preserving paragraph layout.
 - Open original story URLs in the browser.
 - Bookmark stories and comments locally.
 - Translate titles, story text, and comments through `llm.el`.
