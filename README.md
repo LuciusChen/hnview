@@ -70,11 +70,12 @@ Key bindings:
 | `RET` | Open the item at point |
 | `o` | Open original story URL in the system browser |
 | `e` | Open original story URL in EWW |
+| `a` | Open original story URL in hnview's article reader |
 | `b` | Toggle bookmark |
 | `r` | Compose a reply to the story or comment at point |
 | `u` | Upvote the story or comment at point |
 | `t` | Toggle translation at point, translating first if needed |
-| `T` | Toggle translation for all visible titles and comments |
+| `T` | Toggle translation for all visible titles, comments, or article blocks |
 | `TAB` | Toggle comment folding |
 | `+` | Load more comments in a thread |
 | `*` | Load all comments in a thread |
@@ -107,6 +108,21 @@ same SQLite-backed login cookies as reply and voting. Favorites and Upvoted
 combine HN's stories and comments pages into one Emacs section. Favorites are
 public when HN exposes them for that user; Upvoted and Hidden are normally only
 available for the logged-in user.
+
+## Article Reader
+
+Press `a` on a story to open the original URL in `hnview-article-mode`. The
+article reader extracts the main page content into an Emacs buffer, keeps
+paragraphs as logical lines wrapped by `visual-line-mode`, and scales oversized
+images to the current window width. Use `i` to toggle images, `RET` or `TAB` to
+work with links, `o` to open the page externally, and `e` to open it in EWW.
+
+Article buffers reuse the same translation cache and async translation pipeline
+as HN feeds and comments. Press `t` to translate or restore the title or block
+at point, and `T` to translate or restore the article title and all readable
+text blocks. Article translation cache entries are stored in SQLite with a
+synthetic article identity derived from the source URL, so cache hits do not
+call the LLM provider again.
 
 ## Translation
 
@@ -168,13 +184,15 @@ To make translation the default across hnview buffers:
 (setq hnview-translate-by-default t)
 ```
 
-Press `t` to toggle translation for the item at point, translating it first if
-needed. Press `T` to toggle translation for all visible titles and comments:
+Press `t` to toggle translation for the item or article block at point,
+translating it first if needed. Press `T` to toggle translation for all visible
+titles, comments, or article blocks:
 when any visible translation is active it switches visible items back to the
 original text; otherwise it shows cached translations and starts missing
 translations asynchronously. Translated text replaces the original text in
-place and keeps the existing story/comment layout: metadata, status markers,
-indentation, and comment hierarchy stay unchanged. While translations are
+place and keeps the existing story, comment, or article layout where possible:
+metadata, status markers, indentation, and comment hierarchy stay unchanged.
+While translations are
 pending, the original text stays visible and the mode line shows the pending
 translation count. Batch translation is throttled by
 `hnview-translation-concurrency` so `T` does not start every visible comment at

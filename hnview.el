@@ -27,6 +27,8 @@
 
 (declare-function llm-chat-async "llm")
 (declare-function llm-make-chat-prompt "llm")
+(declare-function libxml-parse-html-region "xml.c"
+                  (start end &optional base-url discard-comments))
 (declare-function plz "plz")
 (declare-function plz-error-curl-error "plz")
 (declare-function plz-error-message "plz")
@@ -217,6 +219,17 @@ original language in the current buffer."
   :type 'string
   :group 'hnview)
 
+(defcustom hnview-article-width 88
+  "Preferred visual width for hnview article separators.
+Article paragraphs are rendered as logical lines and wrapped by Emacs."
+  :type 'natnum
+  :group 'hnview)
+
+(defcustom hnview-article-min-text-length 120
+  "Minimum text length preferred for readability candidates."
+  :type 'natnum
+  :group 'hnview)
+
 (defface hnview-date-main
   '((t :inherit variable-pitch :height 1.8 :weight bold))
   "Face for the main date word."
@@ -255,6 +268,11 @@ original language in the current buffer."
 (defface hnview-author
   '((t :inherit default :foreground "#d98245" :weight bold))
   "Face for comment author names."
+  :group 'hnview)
+
+(defface hnview-article-title
+  '((t :inherit hnview-title :height 1.25 :weight bold))
+  "Face for article reader titles."
   :group 'hnview)
 
 (defface hnview-index
@@ -333,6 +351,12 @@ original language in the current buffer."
 (defvar-local hnview--reply-translated-p nil)
 (defvar-local hnview--translate-visible-active-p nil)
 (defvar-local hnview--translation-batch-generation 0)
+(defvar-local hnview--article-url nil)
+(defvar-local hnview--article-source-item nil)
+(defvar-local hnview--article nil)
+(defvar-local hnview--article-loading-message nil)
+(defvar-local hnview--article-error-message nil)
+(defvar-local hnview--article-images-visible-p t)
 
 (defvar hnview-feed-mode-map
   (let ((map (make-sparse-keymap)))
@@ -348,6 +372,7 @@ original language in the current buffer."
     (define-key map (kbd "RET") #'hnview-open-item)
     (define-key map (kbd "o") #'hnview-open-url)
     (define-key map (kbd "e") #'hnview-open-url-eww)
+    (define-key map (kbd "a") #'hnview-open-article)
     (define-key map (kbd "b") #'hnview-toggle-bookmark)
     (define-key map (kbd "r") #'hnview-reply-at-point)
     (define-key map (kbd "u") #'hnview-vote-up)
@@ -367,6 +392,7 @@ original language in the current buffer."
     (define-key map (kbd "RET") #'hnview-open-url)
     (define-key map (kbd "o") #'hnview-open-url)
     (define-key map (kbd "e") #'hnview-open-url-eww)
+    (define-key map (kbd "a") #'hnview-open-article)
     (define-key map (kbd "b") #'hnview-toggle-bookmark)
     (define-key map (kbd "r") #'hnview-reply-at-point)
     (define-key map (kbd "u") #'hnview-vote-up)
@@ -383,6 +409,7 @@ original language in the current buffer."
     (define-key map (kbd "RET") #'hnview-open-url)
     (define-key map (kbd "o") #'hnview-open-url)
     (define-key map (kbd "e") #'hnview-open-url-eww)
+    (define-key map (kbd "a") #'hnview-open-article)
     (define-key map (kbd "r") #'hnview-reply-at-point)
     (define-key map (kbd "u") #'hnview-vote-up)
     (define-key map (kbd "t") #'hnview-translate-at-point)
@@ -405,6 +432,7 @@ original language in the current buffer."
     (define-key map (kbd "RET") #'hnview-open-item)
     (define-key map (kbd "o") #'hnview-open-url)
     (define-key map (kbd "e") #'hnview-open-url-eww)
+    (define-key map (kbd "a") #'hnview-open-article)
     (define-key map (kbd "b") #'hnview-toggle-bookmark)
     (define-key map (kbd "r") #'hnview-reply-at-point)
     (define-key map (kbd "u") #'hnview-vote-up)
@@ -423,6 +451,24 @@ original language in the current buffer."
     (define-key map (kbd "C-c C-k") #'hnview-cancel-reply)
     map)
   "Keymap for `hnview-reply-mode'.")
+
+(defvar hnview-article-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map special-mode-map)
+    (define-key map (kbd "g") #'hnview-article-refresh)
+    (define-key map (kbd "q") #'quit-window)
+    (define-key map (kbd "o") #'hnview-article-open-url)
+    (define-key map (kbd "e") #'hnview-article-open-eww)
+    (define-key map (kbd "i") #'hnview-article-toggle-images)
+    (define-key map (kbd "t") #'hnview-article-translate-at-point)
+    (define-key map (kbd "T") #'hnview-article-translate-visible)
+    (define-key map (kbd "RET") #'shr-browse-url)
+    (define-key map (kbd "TAB") #'shr-next-link)
+    (define-key map (kbd "<backtab>") #'shr-previous-link)
+    (define-key map (kbd "c") #'shr-copy-url)
+    (define-key map (kbd "I") #'shr-browse-image)
+    map)
+  "Keymap for `hnview-article-mode'.")
 
 ;;; State
 
@@ -1705,6 +1751,469 @@ REMAINING is a mutable one-item list containing the fetch budget."
           (format-time-string "%B")
           (format-time-string "%Y"))))
 
+;;; Article reader
+
+(defconst hnview--readability-candidate-tags
+  '(article main section div body td)
+  "HTML tags considered as main-content candidates.")
+
+(defconst hnview--readability-noise-tags
+  '(script style template iframe canvas footer nav form input button
+           select textarea aside)
+  "HTML tags removed before readability scoring.")
+
+(defconst hnview--readability-positive-regexp
+  "\\(?:\\`\\|[-_[:space:]]\\)\\(?:article\\|body\\|content\\|entry\\|hentry\\|main\\|page\\|post\\|story\\|text\\)\\(?:\\'\\|[-_[:space:]]\\)"
+  "Regular expression matching promising content attributes.")
+
+(defconst hnview--readability-negative-regexp
+  "\\(?:\\`\\|[-_[:space:]]\\)\\(?:ad\\|ads\\|advert\\|banner\\|breadcrumb\\|comment\\|comments\\|cookie\\|footer\\|header\\|menu\\|modal\\|nav\\|newsletter\\|popup\\|promo\\|related\\|share\\|sidebar\\|social\\|sponsor\\|subscribe\\)\\(?:\\'\\|[-_[:space:]]\\)"
+  "Regular expression matching likely page chrome attributes.")
+
+(defconst hnview--readability-lazy-image-attributes
+  '(data-src data-original data-lazy-src data-full-src data-actualsrc
+             data-url data-image)
+  "Image attributes used by lazy-loading sites.")
+
+(defun hnview--readability-extract (html url)
+  "Extract a readable article object from HTML fetched from URL."
+  (unless (fboundp 'libxml-parse-html-region)
+    (user-error "This Emacs was not built with libxml2 support"))
+  (let* ((dom (hnview--readability-parse-html html))
+         (title (hnview--readability-title dom))
+         (site (or (hnview--readability-meta-content
+                    dom '("og:site_name" "application-name"))
+                   (hnview--readability-host url)))
+         (byline (or (hnview--readability-meta-content
+                      dom '("author" "article:author" "twitter:creator"))
+                     (hnview--readability-text-by-attribute
+                      dom "\\_<\\(?:author\\|byline\\|by-line\\)\\_>")))
+         (published (hnview--readability-meta-content
+                     dom '("article:published_time" "date"
+                           "datepublished" "pubdate"
+                           "publishdate" "timestamp")))
+         (description (hnview--readability-meta-content
+                       dom '("description" "og:description"
+                             "twitter:description"))))
+    (hnview--readability-normalize-dom dom)
+    (hnview--readability-clean-dom dom)
+    (let* ((content (or (hnview--readability-best-candidate dom)
+                        (car (dom-by-tag dom 'body))
+                        dom))
+           (title (or title
+                      (hnview--readability-first-heading content)
+                      (hnview--readability-host url)
+                      url))
+           (text (hnview--readability-node-text content)))
+      (hnview--readability-drop-duplicate-title content title)
+      (list :url url
+            :title title
+            :site site
+            :byline byline
+            :published published
+            :description description
+            :text-length (length text)
+            :content-dom content))))
+
+(defun hnview--readability-parse-html (html)
+  "Parse HTML into a libxml DOM."
+  (with-temp-buffer
+    (insert (or html ""))
+    (libxml-parse-html-region (point-min) (point-max))))
+
+(defun hnview--readability-title (dom)
+  "Return the best title found in DOM."
+  (or (hnview--readability-meta-content
+       dom '("og:title" "twitter:title" "title"))
+      (when-let* ((title-node (car (dom-by-tag dom 'title))))
+        (hnview--readability-clean-string
+         (hnview--readability-node-text title-node)))
+      (hnview--readability-first-heading dom)))
+
+(defun hnview--readability-meta-content (dom names)
+  "Return the first meta content in DOM matching NAMES."
+  (let ((names (mapcar #'downcase names)))
+    (catch 'found
+      (dolist (meta (dom-by-tag dom 'meta))
+        (let ((key (downcase
+                    (or (dom-attr meta 'property)
+                        (dom-attr meta 'name)
+                        (dom-attr meta 'itemprop)
+                        ""))))
+          (when (member key names)
+            (when-let* ((content
+                         (hnview--readability-clean-string
+                          (dom-attr meta 'content))))
+              (throw 'found content)))))
+      nil)))
+
+(defun hnview--readability-first-heading (dom)
+  "Return the first useful heading text in DOM."
+  (catch 'found
+    (dolist (tag '(h1 h2))
+      (dolist (node (dom-by-tag dom tag))
+        (when-let* ((text (hnview--readability-clean-string
+                           (hnview--readability-node-text node))))
+          (throw 'found text))))
+    nil))
+
+(defun hnview--readability-text-by-attribute (dom regexp)
+  "Return short text from the first DOM node whose attributes match REGEXP."
+  (catch 'found
+    (dolist (node (dom-search
+                   dom
+                   (lambda (node)
+                     (and (consp node)
+                          (string-match-p
+                           regexp
+                           (hnview--readability-attribute-text node))))))
+      (when-let* ((text (hnview--readability-clean-string
+                         (hnview--readability-node-text node))))
+        (when (<= (length text) 160)
+          (throw 'found text))))
+    nil))
+
+(defun hnview--readability-host (url)
+  "Return a readable host for URL."
+  (condition-case nil
+      (string-remove-prefix "www." (hnview--url-host url))
+    (error nil)))
+
+(defun hnview--readability-normalize-dom (node)
+  "Normalize lazy-loaded assets under NODE."
+  (when (consp node)
+    (hnview--readability-normalize-node node)
+    (dolist (child (dom-children node))
+      (when (consp child)
+        (hnview--readability-normalize-dom child)))))
+
+(defun hnview--readability-normalize-node (node)
+  "Normalize lazy-loaded attributes on NODE."
+  (when (eq (dom-tag node) 'img)
+    (when-let* ((src (hnview--readability-image-source node)))
+      (dom-set-attribute node 'src src))))
+
+(defun hnview--readability-image-source (node)
+  "Return the best image source for NODE."
+  (or (hnview--readability-usable-url (dom-attr node 'src))
+      (cl-loop for attr in hnview--readability-lazy-image-attributes
+               thereis (hnview--readability-usable-url
+                        (dom-attr node attr)))
+      (hnview--readability-srcset-url (dom-attr node 'data-srcset))
+      (hnview--readability-srcset-url (dom-attr node 'srcset))))
+
+(defun hnview--readability-usable-url (url)
+  "Return URL when it looks like a useful image URL."
+  (when-let* ((url (hnview--readability-clean-string url)))
+    (unless (or (string-prefix-p "data:" url)
+                (string-prefix-p "#" url))
+      url)))
+
+(defun hnview--readability-srcset-url (srcset)
+  "Return the highest-priority URL from SRCSET."
+  (when-let* ((srcset (hnview--readability-clean-string srcset)))
+    (car
+     (last
+      (delq nil
+            (mapcar
+             (lambda (candidate)
+               (car (split-string (string-trim candidate) "[ \t]+" t)))
+             (split-string srcset "," t "[ \t\n\r]+")))))))
+
+(defun hnview--readability-clean-dom (node)
+  "Remove likely page chrome below NODE."
+  (when (consp node)
+    (setcdr
+     (cdr node)
+     (cl-loop for child in (dom-children node)
+              if (stringp child)
+              collect child
+              else if (and (consp child)
+                           (not (hnview--readability-removable-node-p child)))
+              collect (progn
+                        (hnview--readability-clean-dom child)
+                        child))))
+  node)
+
+(defun hnview--readability-removable-node-p (node)
+  "Return non-nil when NODE is likely not part of the article."
+  (let ((tag (dom-tag node)))
+    (or (memq tag hnview--readability-noise-tags)
+        (hnview--readability-hidden-node-p node)
+        (and (eq tag 'img)
+             (hnview--readability-tiny-image-p node))
+        (and (not (memq tag '(html body article main)))
+             (hnview--readability-negative-node-p node)
+             (not (hnview--readability-positive-node-p node))))))
+
+(defun hnview--readability-hidden-node-p (node)
+  "Return non-nil when NODE is explicitly hidden."
+  (let ((style (downcase (or (dom-attr node 'style) ""))))
+    (or (dom-attr node 'hidden)
+        (equal (downcase (or (dom-attr node 'aria-hidden) "")) "true")
+        (string-match-p
+         "\\(?:display[ \t\n\r]*:[ \t\n\r]*none\\|visibility[ \t\n\r]*:[ \t\n\r]*hidden\\)"
+         style))))
+
+(defun hnview--readability-positive-node-p (node)
+  "Return non-nil when NODE attributes suggest article content."
+  (string-match-p hnview--readability-positive-regexp
+                  (hnview--readability-attribute-text node)))
+
+(defun hnview--readability-negative-node-p (node)
+  "Return non-nil when NODE attributes suggest page chrome."
+  (string-match-p hnview--readability-negative-regexp
+                  (hnview--readability-attribute-text node)))
+
+(defun hnview--readability-attribute-text (node)
+  "Return lower-case searchable attribute text for NODE."
+  (downcase
+   (string-join
+    (delq nil
+          (mapcar
+           (lambda (attr)
+             (when-let* ((value (dom-attr node attr)))
+               (format "%s" value)))
+           '(id class role aria-label itemprop)))
+    " ")))
+
+(defun hnview--readability-tiny-image-p (node)
+  "Return non-nil when NODE is a likely tracking or spacer image."
+  (let ((width (hnview--readability-number-attr node 'width))
+        (height (hnview--readability-number-attr node 'height)))
+    (or (and width (<= width 2))
+        (and height (<= height 2)))))
+
+(defun hnview--readability-number-attr (node attr)
+  "Return numeric ATTR from NODE, or nil."
+  (when-let* ((value (dom-attr node attr)))
+    (when (string-match "\\`[ \t\n\r]*\\([0-9]+\\)" (format "%s" value))
+      (string-to-number (match-string 1 (format "%s" value))))))
+
+(defun hnview--readability-best-candidate (dom)
+  "Return the highest-scoring readable content node from DOM."
+  (let* ((candidates (hnview--readability-candidate-nodes dom))
+         (scored
+          (cl-loop for node in candidates
+                   for text = (hnview--readability-node-text node)
+                   for text-length = (length text)
+                   when (or (>= text-length hnview-article-min-text-length)
+                            (memq (dom-tag node) '(article main body)))
+                   collect (cons (hnview--readability-score node text)
+                                 node))))
+    (cdr (car (sort scored (lambda (a b) (> (car a) (car b))))))))
+
+(defun hnview--readability-candidate-nodes (dom)
+  "Return DOM nodes that may contain article content."
+  (dom-search dom
+              (lambda (node)
+                (and (consp node)
+                     (memq (dom-tag node)
+                           hnview--readability-candidate-tags)))))
+
+(defun hnview--readability-score (node text)
+  "Return readability score for NODE with extracted TEXT."
+  (let* ((tag (dom-tag node))
+         (text-length (length text))
+         (link-density (hnview--readability-link-density node text-length))
+         (paragraph-score (hnview--readability-paragraph-score node))
+         (class-weight (hnview--readability-class-weight node))
+         (tag-weight (pcase tag
+                       ('article 80)
+                       ('main 60)
+                       ('section 20)
+                       ('td -20)
+                       ('body -35)
+                       (_ 0)))
+         (punctuation-score
+          (* 2 (cl-count-if
+                (lambda (char)
+                  (memq char '(?, ?. ?! ?? ?\; ?， ?。 ?！ ?？ ?；)))
+                text))))
+    (- (+ (/ text-length 25.0)
+          paragraph-score
+          punctuation-score
+          class-weight
+          tag-weight)
+       (* link-density 140))))
+
+(defun hnview--readability-link-density (node text-length)
+  "Return link density for NODE given TEXT-LENGTH."
+  (if (zerop text-length)
+      0.0
+    (/ (float
+        (cl-loop for link in (dom-by-tag node 'a)
+                 sum (length (hnview--readability-node-text link))))
+       text-length)))
+
+(defun hnview--readability-paragraph-score (node)
+  "Return paragraph-density score for NODE."
+  (cl-loop for paragraph in (append (dom-by-tag node 'p)
+                                    (dom-by-tag node 'pre)
+                                    (dom-by-tag node 'blockquote))
+           for length = (length (hnview--readability-node-text paragraph))
+           sum (cond
+                ((> length 220) 18)
+                ((> length 120) 10)
+                ((> length 60) 4)
+                (t 0))))
+
+(defun hnview--readability-class-weight (node)
+  "Return readability weight from NODE attributes."
+  (let ((attributes (hnview--readability-attribute-text node)))
+    (+ (if (string-match-p hnview--readability-positive-regexp attributes)
+           40
+         0)
+       (if (string-match-p hnview--readability-negative-regexp attributes)
+           -70
+         0))))
+
+(defun hnview--readability-node-text (node)
+  "Return normalized text contained in NODE."
+  (cond
+   ((null node) "")
+   ((stringp node) (hnview--readability-collapse-space node))
+   ((consp node)
+    (hnview--readability-collapse-space (dom-inner-text node)))
+   (t "")))
+
+(defun hnview--readability-clean-string (text)
+  "Return TEXT trimmed and collapsed, or nil if empty."
+  (when text
+    (let ((text (string-trim
+                 (hnview--readability-collapse-space (format "%s" text)))))
+      (unless (string-empty-p text)
+        text))))
+
+(defun hnview--readability-collapse-space (text)
+  "Collapse whitespace in TEXT."
+  (replace-regexp-in-string "[ \t\n\r]+" " " (or text "")))
+
+(defun hnview--readability-drop-duplicate-title (content title)
+  "Remove a first heading from CONTENT when it duplicates TITLE."
+  (when-let* ((title (hnview--readability-clean-string title))
+              (heading (car (cl-loop for tag in '(h1 h2)
+                                      append (dom-by-tag content tag))))
+              (heading-text (hnview--readability-clean-string
+                             (hnview--readability-node-text heading))))
+    (when (hnview--readability-similar-title-p title heading-text)
+      (dom-remove-node content heading))))
+
+(defun hnview--readability-similar-title-p (a b)
+  "Return non-nil when A and B are similar article titles."
+  (let ((a (downcase (hnview--readability-collapse-space a)))
+        (b (downcase (hnview--readability-collapse-space b))))
+    (or (string= a b)
+        (and (> (min (length a) (length b)) 24)
+             (or (string-prefix-p a b)
+                 (string-prefix-p b a))))))
+
+(defun hnview--readability-wrap-dom (content url)
+  "Wrap CONTENT with a base tag for URL."
+  (dom-node 'html nil
+            (dom-node 'head nil
+                      (dom-node 'base `((href . ,url))))
+            (dom-node 'body nil content)))
+
+(defconst hnview--article-translatable-tags
+  '(p li blockquote figcaption h1 h2 h3 h4 h5 h6)
+  "Article DOM tags translated as independent blocks.")
+
+(defun hnview--article-id (article)
+  "Return stable internal ID for ARTICLE."
+  (secure-hash 'sha1 (or (plist-get article :url)
+                         (plist-get article :title)
+                         "")))
+
+(defun hnview--article-segment-id (article name)
+  "Return internal translation ID for ARTICLE segment NAME."
+  (format "article:%s:%s" (hnview--article-id article) name))
+
+(defun hnview--article-title-item (article)
+  "Return synthetic translation item for ARTICLE title."
+  (when-let* ((title (hnview--readability-clean-string
+                      (plist-get article :title))))
+    (list :type "article-segment"
+          :text title
+          :hnview-translation-id
+          (hnview--article-segment-id article "title"))))
+
+(defun hnview--article-body-items (article)
+  "Return synthetic translation items for ARTICLE body blocks."
+  (mapcar #'cdr (hnview--article-body-segments article)))
+
+(defun hnview--article-body-segments (article)
+  "Return body segment pairs for ARTICLE without mutating its DOM."
+  (let ((index 0)
+        segments)
+    (hnview--article-walk-translatable-nodes
+     (plist-get article :content-dom)
+     (lambda (node)
+       (when-let* ((text (hnview--readability-clean-string
+                          (hnview--readability-node-text node))))
+         (let* ((name (format "body-%d" index))
+                (item (list :type "article-segment"
+                            :text text
+                            :hnview-translation-id
+                            (hnview--article-segment-id article name))))
+           (cl-incf index)
+           (push (cons name item) segments)))))
+    (nreverse segments)))
+
+(defun hnview--article-walk-translatable-nodes (node callback)
+  "Call CALLBACK for each translatable NODE below NODE."
+  (when (consp node)
+    (if (hnview--article-translatable-node-p node)
+        (funcall callback node)
+      (dolist (child (dom-children node))
+        (when (consp child)
+          (hnview--article-walk-translatable-nodes child callback))))))
+
+(defun hnview--article-translatable-node-p (node)
+  "Return non-nil when NODE should translate as one article block."
+  (and (memq (dom-tag node) hnview--article-translatable-tags)
+       (not (hnview--article-has-translatable-child-p node))
+       (hnview--readability-clean-string
+        (hnview--readability-node-text node))))
+
+(defun hnview--article-has-translatable-child-p (node)
+  "Return non-nil when NODE has a translatable child block."
+  (cl-some (lambda (child)
+             (and (consp child)
+                  (or (memq (dom-tag child)
+                            hnview--article-translatable-tags)
+                      (hnview--article-has-translatable-child-p child))))
+           (dom-children node)))
+
+(defun hnview--article-prepare-render-dom (article)
+  "Return render DOM and segment info for ARTICLE.
+The returned value is a cons cell (DOM . SEGMENTS)."
+  (let ((dom (copy-tree (plist-get article :content-dom)))
+        (segments (hnview--article-body-segments article))
+        (index 0)
+        render-segments)
+    (hnview--article-walk-translatable-nodes
+     dom
+     (lambda (node)
+       (when-let* ((pair (nth index segments)))
+         (let* ((name (car pair))
+                (item (cdr pair))
+                (target (format "hnview-article-%s" name))
+                (source (plist-get item :text))
+                (translation
+                 (when (hnview--translation-visible-state-p item 'text)
+                   (hnview--cached-translation item 'text source))))
+           (dom-set-attribute node 'id target)
+           (when translation
+             (hnview--article-replace-node-text node translation))
+           (push (list :target target :item item) render-segments)
+           (cl-incf index)))))
+    (cons dom (nreverse render-segments))))
+
+(defun hnview--article-replace-node-text (node text)
+  "Replace NODE children with translated TEXT."
+  (setcdr (cdr node) (list text)))
+
 ;;; Translation
 
 (defun hnview--translation-segments (item)
@@ -1713,6 +2222,9 @@ REMAINING is a mutable one-item list containing the fetch budget."
     ("comment"
      (hnview--non-empty-segments
       `((text . ,(hnview--html-to-text (plist-get item :text))))))
+    ("article-segment"
+     (hnview--non-empty-segments
+      `((text . ,(plist-get item :text)))))
     (_
      (hnview--non-empty-segments
       `((title . ,(plist-get item :title))
@@ -1724,15 +2236,60 @@ REMAINING is a mutable one-item list containing the fetch budget."
                   (string-empty-p (or (cdr segment) "")))
                 segments))
 
+(defun hnview--translation-units (item)
+  "Return translation units adapted from hnview ITEM."
+  (let ((id (hnview--translation-item-key item))
+        (item-id (hnview--translation-item-id item)))
+    (mapcar (lambda (segment)
+              (pcase-let ((`(,name . ,source) segment))
+                (hnview--translation-unit id name source item-id)))
+            (hnview--translation-segments item))))
+
+(defun hnview--translation-unit (id segment source &optional item-id)
+  "Return a provider-neutral translation unit.
+ID is a stable source identity.  SEGMENT names the translated portion.
+SOURCE is the source text.  ITEM-ID is the optional numeric Hacker News item
+id used only for persistence metadata."
+  (list :id (format "%s" (or id "region"))
+        :segment segment
+        :source (or source "")
+        :item-id item-id
+        :backend hnview-translate-backend
+        :target-language hnview-translate-target-language
+        :style-hash (hnview--translation-style-hash)))
+
+(defun hnview--translation-unit-cache-key (unit)
+  "Return cache key for translation UNIT."
+  (format "%s:%s:%s:%s:%s"
+          (or (plist-get unit :backend) hnview-translate-backend)
+          (or (plist-get unit :target-language)
+              hnview-translate-target-language)
+          (or (plist-get unit :style-hash)
+              (hnview--translation-style-hash))
+          (format "%s:%s" (plist-get unit :id)
+                  (or (plist-get unit :segment) 'item))
+          (secure-hash 'sha1 (or (plist-get unit :source) ""))))
+
+(defun hnview--translation-unit-for-segment (item segment)
+  "Return ITEM translation unit for SEGMENT."
+  (cl-find segment (hnview--translation-units item)
+           :key (lambda (unit)
+                  (plist-get unit :segment))))
+
 (defun hnview--translation-key (item text &optional segment)
   "Return cache key for ITEM, TEXT, and SEGMENT."
-  (format "%s:%s:%s:%s:%s"
-          hnview-translate-backend
-          hnview-translate-target-language
-          (hnview--translation-style-hash)
-          (format "%s:%s" (or (plist-get item :id) "region")
-                  (or segment 'item))
-          (secure-hash 'sha1 text)))
+  (hnview--translation-unit-cache-key
+   (hnview--translation-unit
+    (hnview--translation-item-key item)
+    (or segment 'item)
+    text
+    (hnview--translation-item-id item))))
+
+(defun hnview--translation-item-key (item)
+  "Return stable translation identity for ITEM."
+  (format "%s" (or (plist-get item :id)
+                   (plist-get item :hnview-translation-id)
+                   "region")))
 
 (defun hnview--translation-style-hash ()
   "Return a hash for translation style settings."
@@ -1755,7 +2312,16 @@ REMAINING is a mutable one-item list containing the fetch budget."
 
 (defun hnview--cached-translation (item segment text)
   "Return cached translation for ITEM SEGMENT and TEXT, if any."
-  (let ((key (hnview--translation-key item text segment)))
+  (hnview--cached-translation-unit
+   (hnview--translation-unit
+    (hnview--translation-item-key item)
+    segment
+    text
+    (hnview--translation-item-id item))))
+
+(defun hnview--cached-translation-unit (unit)
+  "Return cached translation for translation UNIT, if any."
+  (let ((key (hnview--translation-unit-cache-key unit)))
     (when-let* ((translation (gethash key hnview--translations))
                 (translation (hnview--usable-translation translation)))
       (hnview--touch-translation key)
@@ -1773,13 +2339,22 @@ REMAINING is a mutable one-item list containing the fetch budget."
 
 (defun hnview--translation-pending-p (item segment text)
   "Return non-nil when ITEM SEGMENT TEXT is being translated."
-  (let ((key (hnview--translation-key item text segment)))
-    (gethash key hnview--pending-translations)))
+  (hnview--translation-unit-pending-p
+   (hnview--translation-unit
+    (hnview--translation-item-key item)
+    segment
+    text
+    (hnview--translation-item-id item))))
+
+(defun hnview--translation-unit-pending-p (unit)
+  "Return non-nil when translation UNIT is pending."
+  (gethash (hnview--translation-unit-cache-key unit)
+           hnview--pending-translations))
 
 (defun hnview--translated-segment-p (item segment)
   "Return non-nil when ITEM SEGMENT has a cached translation."
-  (when-let* ((text (cdr (assq segment (hnview--translation-segments item)))))
-    (hnview--cached-translation item segment text)))
+  (when-let* ((unit (hnview--translation-unit-for-segment item segment)))
+    (hnview--cached-translation-unit unit)))
 
 (defun hnview--fully-translated-p (item)
   "Return non-nil when every segment of ITEM has a translation."
@@ -1791,71 +2366,93 @@ REMAINING is a mutable one-item list containing the fetch budget."
 
 (defun hnview--visible-translation-p (item)
   "Return non-nil when ITEM has a visible translation."
-  (cl-some (lambda (segment)
-             (and (hnview--translated-segment-p item (car segment))
-                  (hnview--translation-visible-state-p item (car segment))))
-           (hnview--translation-segments item)))
+  (cl-some (lambda (unit)
+             (let ((segment (plist-get unit :segment)))
+               (and (hnview--cached-translation-unit unit)
+                    (hnview--translation-visible-state-p item segment))))
+           (hnview--translation-units item)))
 
 (defun hnview--active-translation-p (item)
   "Return non-nil when ITEM has visible or pending translation state."
-  (cl-some (lambda (segment)
-             (pcase-let ((`(,name . ,text) segment))
-               (and (hnview--translation-visible-state-p item name)
-                    (or (hnview--cached-translation item name text)
-                        (hnview--translation-pending-p item name text)))))
-           (hnview--translation-segments item)))
+  (cl-some (lambda (unit)
+             (let ((segment (plist-get unit :segment)))
+               (and (hnview--translation-visible-state-p item segment)
+                    (or (hnview--cached-translation-unit unit)
+                        (hnview--translation-unit-pending-p unit)))))
+           (hnview--translation-units item)))
 
 (defun hnview--needs-translation-p (item)
   "Return non-nil when ITEM has untranslated, non-pending text."
-  (cl-some (lambda (segment)
-             (pcase-let ((`(,name . ,text) segment))
-               (not (or (hnview--cached-translation item name text)
-                        (hnview--translation-pending-p item name text)))))
-           (hnview--translation-segments item)))
+  (cl-some (lambda (unit)
+             (not (or (hnview--cached-translation-unit unit)
+                      (hnview--translation-unit-pending-p unit))))
+           (hnview--translation-units item)))
 
 (defun hnview--translate-item (item callback)
   "Translate ITEM, then call CALLBACK with ERROR and TRANSLATION."
-  (let ((segments (hnview--translation-segments item)))
-    (if (null segments)
+  (let ((units (hnview--translation-units item)))
+    (if (null units)
         (funcall callback "No text to translate" nil)
-      (hnview--translate-segments item segments callback))))
+      (hnview--translate-units units callback))))
 
 (defun hnview--translate-segments (item segments callback)
   "Translate ITEM SEGMENTS, then call CALLBACK."
+  (hnview--translate-units
+   (mapcar (lambda (segment)
+             (pcase-let ((`(,name . ,text) segment))
+               (hnview--translation-unit
+                (hnview--translation-item-key item)
+                name text
+                (hnview--translation-item-id item))))
+           segments)
+   callback))
+
+(defun hnview--translate-units (units callback)
+  "Translate UNITS, then call CALLBACK."
   (let ((pending 0)
         (failed nil)
         (started nil))
-    (dolist (segment segments)
-      (pcase-let ((`(,name . ,text) segment))
-        (unless (or (hnview--cached-translation item name text)
-                    (hnview--translation-pending-p item name text))
-          (setq started t)
-          (cl-incf pending)
-          (hnview--translate-segment
-           item name text
-           (lambda (error _translation)
-             (when error
-               (setq failed (or failed error)))
-             (cl-decf pending)
-             (when (zerop pending)
-               (funcall callback failed t)))))))
+    (dolist (unit units)
+      (unless (or (hnview--cached-translation-unit unit)
+                  (hnview--translation-unit-pending-p unit))
+        (setq started t)
+        (cl-incf pending)
+        (hnview--translate-unit
+         unit
+         (lambda (error _translation)
+           (when error
+             (setq failed (or failed error)))
+           (cl-decf pending)
+           (when (zerop pending)
+             (funcall callback failed t))))))
     (unless started
       (funcall callback nil t))))
 
 (defun hnview--translate-segment (item segment text callback)
   "Translate ITEM SEGMENT TEXT, then call CALLBACK."
-  (let ((key (hnview--translation-key item text segment)))
+  (hnview--translate-unit
+   (hnview--translation-unit
+    (hnview--translation-item-key item)
+    segment
+    text
+    (hnview--translation-item-id item))
+   callback))
+
+(defun hnview--translate-unit (unit callback)
+  "Translate UNIT, then call CALLBACK with ERROR and TRANSLATION."
+  (let ((key (hnview--translation-unit-cache-key unit)))
     (puthash key t hnview--pending-translations)
     (force-mode-line-update t)
     (hnview--translate-text-with-empty-retry
-     text
-       (lambda (error translation)
-         (remhash key hnview--pending-translations)
-         (force-mode-line-update t)
-         (when translation
-           (puthash key translation hnview--translations)
-           (hnview--persist-translation item segment text translation))
-         (funcall callback error translation)))))
+     (plist-get unit :source)
+     (lambda (error translation)
+       (remhash key hnview--pending-translations)
+       (force-mode-line-update t)
+       (when translation
+         (puthash key translation hnview--translations)
+         (hnview--persist-translation-unit unit translation))
+       (funcall callback error translation))
+     (plist-get unit :target-language))))
 
 (defun hnview--translate-text-with-empty-retry
     (text callback &optional target-language retries)
@@ -1884,15 +2481,31 @@ TARGET-LANGUAGE is passed to `hnview--translate-text'.  RETRIES overrides
 
 (defun hnview--persist-translation (item segment source translation)
   "Persist ITEM SEGMENT SOURCE TRANSLATION."
+  (hnview--persist-translation-unit
+   (hnview--translation-unit
+    (hnview--translation-item-key item)
+    segment
+    source
+    (hnview--translation-item-id item))
+   translation))
+
+(defun hnview--persist-translation-unit (unit translation)
+  "Persist translation UNIT with TRANSLATION."
   (hnview--ensure-db)
   (hnview--upsert-translation-row
-   (hnview--translation-key item source segment)
-   hnview-translate-backend
-   hnview-translate-target-language
-   (plist-get item :id)
-   segment
-   source
+   (hnview--translation-unit-cache-key unit)
+   (plist-get unit :backend)
+   (plist-get unit :target-language)
+   (plist-get unit :item-id)
+   (plist-get unit :segment)
+   (plist-get unit :source)
    translation))
+
+(defun hnview--translation-item-id (item)
+  "Return numeric Hacker News ID for ITEM, or nil for synthetic items."
+  (let ((id (plist-get item :id)))
+    (when (integerp id)
+      id)))
 
 (defun hnview--upsert-translation-row
     (key backend target-language item-id segment source translation)
@@ -2099,7 +2712,7 @@ TARGET-LANGUAGE is passed to `hnview--translate-text'.  RETRIES overrides
 
 (defun hnview--original-key (item segment)
   "Return visibility key for ITEM SEGMENT."
-  (format "%s:%s" (or (plist-get item :id) "region") segment))
+  (format "%s:%s" (hnview--translation-item-key item) segment))
 
 (defun hnview--ensure-hidden-translations ()
   "Ensure translation visibility overrides exist for the current buffer."
@@ -3015,6 +3628,330 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
   (eww (hnview--item-url (or (hnview--item-at-point)
                               hnview--thread-root))))
 
+(defun hnview-open-article ()
+  "Open the URL for the item at point in hnview's article reader."
+  (interactive)
+  (hnview--open-article (or (hnview--item-at-point)
+                             hnview--thread-root)))
+
+(defun hnview--open-article (item)
+  "Open ITEM's URL in an hnview article reader buffer."
+  (unless item
+    (user-error "No item at point"))
+  (let* ((url (hnview--item-url item))
+         (title (or (plist-get item :title)
+                    (hnview--readability-host url)
+                    "article"))
+         (buffer (get-buffer-create
+                  (format "*hnview article: %s*"
+                          (truncate-string-to-width title 48 nil nil t)))))
+    (switch-to-buffer buffer)
+    (hnview-article-mode)
+    (setq-local hnview--article-url url)
+    (setq-local hnview--article-source-item item)
+    (setq-local hnview--article nil)
+    (setq-local hnview--article-error-message nil)
+    (setq-local hnview--article-loading-message "Loading article...")
+    (hnview--render-article)
+    (hnview--fetch-article url buffer)))
+
+(defun hnview--fetch-article (url buffer)
+  "Fetch URL and render it into BUFFER as a readable article."
+  (hnview--url-text
+   url
+   (lambda (error html)
+     (when (buffer-live-p buffer)
+       (with-current-buffer buffer
+         (when (equal hnview--article-url url)
+           (setq-local hnview--article-loading-message nil)
+           (if error
+               (setq-local hnview--article-error-message error)
+             (condition-case err
+                 (setq-local hnview--article
+                             (hnview--readability-extract html url))
+               (error
+                (setq-local hnview--article-error-message
+                            (error-message-string err)))))
+           (hnview--render-article)))))))
+
+(defun hnview-article-refresh ()
+  "Refresh the current hnview article reader buffer."
+  (interactive)
+  (unless (derived-mode-p 'hnview-article-mode)
+    (user-error "Not in an hnview article buffer"))
+  (unless hnview--article-url
+    (user-error "No article URL in this buffer"))
+  (setq-local hnview--article-loading-message "Loading article...")
+  (setq-local hnview--article-error-message nil)
+  (hnview--render-article)
+  (hnview--fetch-article hnview--article-url (current-buffer)))
+
+(defun hnview-article-open-url ()
+  "Open the current article URL in the system browser."
+  (interactive)
+  (unless hnview--article-url
+    (user-error "No article URL in this buffer"))
+  (browse-url hnview--article-url))
+
+(defun hnview-article-open-eww ()
+  "Open the current article URL in EWW."
+  (interactive)
+  (unless hnview--article-url
+    (user-error "No article URL in this buffer"))
+  (eww hnview--article-url))
+
+(defun hnview-article-toggle-images ()
+  "Toggle images in the current article buffer."
+  (interactive)
+  (unless (derived-mode-p 'hnview-article-mode)
+    (user-error "Not in an hnview article buffer"))
+  (setq-local hnview--article-images-visible-p
+              (not hnview--article-images-visible-p))
+  (hnview--rerender-article-buffer t)
+  (message "Article images %s"
+           (if hnview--article-images-visible-p "on" "off")))
+
+(defun hnview-article-translate-at-point ()
+  "Toggle translation for the article block at point."
+  (interactive)
+  (hnview--ensure-state-loaded)
+  (unless (derived-mode-p 'hnview-article-mode)
+    (user-error "Not in an hnview article buffer"))
+  (let ((item (hnview--article-item-at-point))
+        (state (hnview--article-point-state))
+        (buffer (current-buffer)))
+    (unless item
+      (user-error "No article text at point"))
+    (hnview--toggle-translation-item
+     item buffer state #'hnview--rerender-article-buffer)))
+
+(defun hnview-article-translate-visible ()
+  "Toggle translation for the current article buffer."
+  (interactive)
+  (hnview--ensure-state-loaded)
+  (unless (derived-mode-p 'hnview-article-mode)
+    (user-error "Not in an hnview article buffer"))
+  (unless hnview--article
+    (user-error "No article loaded"))
+  (let ((items (hnview--article-visible-items))
+        (state (hnview--article-point-state))
+        (buffer (current-buffer)))
+    (unless items
+      (user-error "No article text to translate"))
+    (cl-incf hnview--translation-batch-generation)
+    (if (or hnview--translate-visible-active-p
+            (cl-some #'hnview--active-translation-p items))
+        (progn
+          (setq-local hnview--translate-visible-active-p nil)
+          (dolist (item items)
+            (hnview--set-item-translation-hidden item t))
+          (hnview--rerender-article-buffer state))
+      (setq-local hnview--translate-visible-active-p t)
+      (dolist (item items)
+        (hnview--set-item-translation-hidden item nil))
+      (hnview--rerender-article-buffer state)
+      (when-let* ((pending-items
+                   (cl-remove-if-not #'hnview--needs-translation-p items)))
+        (hnview--translate-items-with-renderer
+         pending-items buffer
+         #'hnview--rerender-article-buffer
+         hnview--translation-batch-generation)))))
+
+(defun hnview--render-article ()
+  "Render the current article reader buffer."
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (cond
+     (hnview--article
+      (hnview--insert-article-header hnview--article)
+      (when hnview--article-loading-message
+        (hnview--insert-line hnview--article-loading-message 'hnview-loading))
+      (when hnview--article-error-message
+        (hnview--insert-line hnview--article-error-message 'error))
+      (insert "\n")
+      (hnview--insert-line (make-string hnview-article-width ?-)
+                           'hnview-divider)
+      (insert "\n")
+      (hnview--insert-article-content hnview--article))
+     (hnview--article-loading-message
+      (hnview--insert-line hnview--article-loading-message 'hnview-loading))
+     (hnview--article-error-message
+      (hnview--insert-line hnview--article-error-message 'error)
+      (when hnview--article-url
+        (insert "\n")
+        (hnview--insert-line hnview--article-url 'hnview-domain)))
+     (t
+      (hnview--insert-line "No article loaded." 'hnview-meta)))
+    (goto-char (point-min))))
+
+(defun hnview--rerender-article-buffer (&optional preserve-state)
+  "Render current article buffer and restore PRESERVE-STATE.
+When PRESERVE-STATE is t, preserve the article block around current point."
+  (let ((state (if (eq preserve-state t)
+                   (hnview--article-point-state)
+                 preserve-state)))
+    (hnview--render-article)
+    (when state
+      (hnview--restore-article-point-state state))))
+
+(defun hnview--article-item-at-point ()
+  "Return article translation item at point."
+  (hnview--line-property 'hnview-article-item))
+
+(defun hnview--article-visible-items ()
+  "Return translatable items for the current article."
+  (delq nil
+        (cons (hnview--article-title-item hnview--article)
+              (hnview--article-body-items hnview--article))))
+
+(defun hnview--article-point-state ()
+  "Return article point state for later restoration."
+  (let ((item (hnview--article-item-at-point))
+        (window (get-buffer-window (current-buffer) t)))
+    (append
+     (list :point (point)
+           :window-start (when window (window-start window))
+           :column (current-column))
+     (when item
+       (list :item-key (hnview--translation-item-key item))))))
+
+(defun hnview--restore-article-point-state (state)
+  "Restore article point STATE."
+  (let ((key (plist-get state :item-key))
+        (column (plist-get state :column))
+        (fallback (plist-get state :point))
+        (window-start (plist-get state :window-start))
+        restored)
+    (when key
+      (goto-char (point-min))
+      (setq restored
+            (catch 'found
+              (while (< (point) (point-max))
+                (when-let* ((item (get-text-property
+                                   (point) 'hnview-article-item)))
+                  (when (equal (hnview--translation-item-key item) key)
+                    (move-to-column (or column 0))
+                    (throw 'found t)))
+                (goto-char
+                 (or (next-single-property-change
+                      (point) 'hnview-article-item nil (point-max))
+                     (point-max)))))))
+    (unless restored
+      (goto-char (min (or fallback (point-min)) (point-max))))
+    (when-let* ((window (and window-start
+                             (get-buffer-window (current-buffer) t))))
+      (set-window-start window (min window-start (point-max)) t))))
+
+(defun hnview--insert-article-header (article)
+  "Insert ARTICLE metadata."
+  (let* ((item (hnview--article-title-item article))
+         (source (or (plist-get item :text)
+                     (plist-get article :title)
+                     "(untitled)"))
+         (translation
+          (when (and item
+                     (hnview--translation-visible-state-p item 'text))
+            (hnview--cached-translation item 'text source))))
+    (hnview--insert-line (or translation source)
+                         'hnview-article-title
+                         'hnview-article-item item))
+  (let ((parts (delq nil
+                     (list (plist-get article :site)
+                           (plist-get article :byline)
+                           (plist-get article :published)
+                           (when (not hnview--article-images-visible-p)
+                             "images hidden")))))
+    (when parts
+      (hnview--insert-line (string-join parts " • ") 'hnview-meta)))
+  (when-let* ((url (plist-get article :url)))
+    (hnview--insert-line url 'hnview-domain)))
+
+(defun hnview--insert-article-content (article)
+  "Insert readable ARTICLE content."
+  (if (plist-get article :content-dom)
+      (pcase-let* ((`(,dom . ,segments)
+                    (hnview--article-prepare-render-dom article))
+                   (url (plist-get article :url))
+                   (start (point))
+                   (shr-width hnview-article-width)
+                   (shr-max-width hnview-article-width)
+                   (shr-fill-text nil)
+                   (shr-use-fonts nil)
+                   (shr-inhibit-images (not hnview--article-images-visible-p))
+                   (shr-max-image-proportion 1.0)
+                   (shr-put-image-function #'hnview--article-put-image))
+        (shr-insert-document (hnview--readability-wrap-dom dom url))
+        (hnview--annotate-article-segments start (point) segments))
+    (hnview--insert-line "No readable content found." 'hnview-meta)))
+
+(defun hnview--annotate-article-segments (start end segments)
+  "Add article item properties between START and END for SEGMENTS."
+  (let ((positions (hnview--article-segment-positions start end segments)))
+    (cl-loop for tail on positions
+             for (_target item position) = (car tail)
+             for next = (or (caddr (cadr tail)) end)
+             when (< position next)
+             do (add-text-properties
+                 position next
+                 (list 'hnview-article-item item)))))
+
+(defun hnview--article-segment-positions (start end segments)
+  "Return sorted rendered positions for article SEGMENTS between START and END."
+  (let (positions)
+    (save-excursion
+      (goto-char start)
+      (while (< (point) end)
+        (when-let* ((targets (get-text-property (point) 'shr-target-id)))
+          (dolist (target (if (listp targets) targets (list targets)))
+            (when-let* ((entry (cl-find target segments
+                                        :key (lambda (segment)
+                                               (plist-get segment :target))
+                                        :test #'equal)))
+              (push (list target (plist-get entry :item) (point))
+                    positions))))
+        (goto-char (or (next-single-property-change (point) 'shr-target-id nil end)
+                       end))))
+    (sort positions (lambda (a b) (< (caddr a) (caddr b))))))
+
+(defun hnview--article-put-image (spec alt &optional flags)
+  "Insert image SPEC with ALT and FLAGS scaled to window width."
+  (let ((max-width (hnview--article-image-max-width-pixels))
+        (max-height (hnview--article-image-max-height-pixels))
+        (rescale (symbol-function 'shr-rescale-image))
+        (shr-image-zoom-levels '(fit original image fill-height)))
+    (cl-letf (((symbol-function 'shr-rescale-image)
+               (lambda (data content-type width height
+                             &optional _max-width _max-height)
+                 (let ((shr-max-image-proportion 1.0))
+                   (funcall rescale data content-type width height
+                            max-width max-height)))))
+      (shr-put-image spec alt flags))))
+
+(defun hnview--article-image-max-width-pixels ()
+  "Return maximum image width in pixels for the current article."
+  (max 80
+       (- (hnview--article-window-width-pixels)
+          (* 2 (frame-char-width)))))
+
+(defun hnview--article-image-max-height-pixels ()
+  "Return maximum image height in pixels for the current article."
+  (max 120
+       (truncate (* 0.86 (hnview--article-window-height-pixels)))))
+
+(defun hnview--article-window-width-pixels ()
+  "Return current article window width in pixels."
+  (if-let* ((window (get-buffer-window (current-buffer) t))
+            (edges (window-inside-pixel-edges window)))
+      (- (nth 2 edges) (nth 0 edges))
+    (* (max hnview-article-width 80) (frame-char-width))))
+
+(defun hnview--article-window-height-pixels ()
+  "Return current article window height in pixels."
+  (if-let* ((window (get-buffer-window (current-buffer) t))
+            (edges (window-inside-pixel-edges window)))
+      (- (nth 3 edges) (nth 1 edges))
+    (* 40 (frame-char-height))))
+
 (defun hnview--item-url (item)
   "Return the best URL for ITEM."
   (unless item
@@ -3042,11 +3979,13 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
 (defun hnview--buffer-pending-translation-count ()
   "Return the number of pending translation segments visible in this buffer."
   (let ((count 0))
-    (dolist (item (hnview--visible-buffer-items))
-      (dolist (segment (hnview--translation-segments item))
-        (pcase-let ((`(,name . ,text) segment))
-          (when (hnview--translation-pending-p item name text)
-            (cl-incf count)))))
+    (dolist (item (if (and (derived-mode-p 'hnview-article-mode)
+                           hnview--article)
+                      (hnview--article-visible-items)
+                    (hnview--visible-buffer-items)))
+      (dolist (unit (hnview--translation-units item))
+        (when (hnview--translation-unit-pending-p unit)
+          (cl-incf count))))
     count))
 
 (defun hnview-toggle-bookmark ()
@@ -3231,22 +4170,28 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
         (buffer (current-buffer)))
     (unless item
       (user-error "No item at point"))
-    (cond
-     ((or (hnview--fully-translated-p item)
+    (hnview--toggle-translation-item
+     item buffer state #'hnview--rerender-current-buffer)))
+
+(defun hnview--toggle-translation-item (item buffer state rerender-function)
+  "Toggle translation for ITEM in BUFFER.
+STATE is restored for immediate toggles.  RERENDER-FUNCTION is called in the
+target buffer with either STATE or t."
+  (if (or (hnview--fully-translated-p item)
           (hnview--active-translation-p item))
-      (hnview--set-item-translation-hidden
-       item (hnview--active-translation-p item))
-      (hnview--rerender-current-buffer state))
-     (t
-      (hnview--set-item-translation-hidden item nil)
-      (hnview--translate-item
-       item
-       (lambda (error _translation)
-         (when error
-           (message "%s" error))
-         (when (buffer-live-p buffer)
-           (with-current-buffer buffer
-             (hnview--rerender-current-buffer t)))))))))
+      (progn
+        (hnview--set-item-translation-hidden
+         item (hnview--active-translation-p item))
+        (funcall rerender-function state))
+    (hnview--set-item-translation-hidden item nil)
+    (hnview--translate-item
+     item
+     (lambda (error _translation)
+       (when error
+         (message "%s" error))
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (funcall rerender-function t)))))))
 
 (defun hnview-translate-visible ()
   "Toggle translation for visible hnview titles and comments."
@@ -3280,6 +4225,14 @@ POINT-STATE is accepted for compatibility but callbacks preserve current point.
 When GENERATION is non-nil, stop scheduling items if that visible translation
 generation is no longer active."
   (ignore point-state)
+  (hnview--translate-items-with-renderer
+   items buffer #'hnview--rerender-current-buffer generation))
+
+(defun hnview--translate-items-with-renderer
+    (items buffer rerender-function &optional generation)
+  "Translate ITEMS for BUFFER and call RERENDER-FUNCTION after updates.
+When GENERATION is non-nil, stop scheduling items if that visible translation
+generation is no longer active."
   (let ((queue (copy-sequence items))
         (active 0)
         (concurrency (max 1 hnview-translation-concurrency)))
@@ -3295,7 +4248,7 @@ generation is no longer active."
            (setq active (max 0 (1- active)))
            (when (active-p)
              (with-current-buffer buffer
-               (hnview--rerender-current-buffer t))
+               (funcall rerender-function t))
              (when queue
                (schedule))))
          (step ()
@@ -3385,6 +4338,15 @@ generation is no longer active."
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
+
+(define-derived-mode hnview-article-mode special-mode "hnview-article"
+  "Major mode for reading extracted web articles."
+  (setq-local truncate-lines nil)
+  (setq-local shr-put-image-function #'hnview--article-put-image)
+  (hnview--enable-translation-mode-line)
+  (setq-local hnview--hidden-translations
+              (make-hash-table :test #'equal))
+  (visual-line-mode 1))
 
 (define-derived-mode hnview-reply-mode text-mode "hnview-reply"
   "Major mode for composing Hacker News replies."

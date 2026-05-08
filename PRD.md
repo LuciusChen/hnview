@@ -23,6 +23,7 @@ work is packaging polish plus a few advanced HN workflows.
 | --- | --- | --- |
 | Feed browsing | Done | Top, Ask, Show, Best, New, Active; Ask/Show and Best/New sub-sections. |
 | Thread reading | Done | Story header, nested comments, load more/all. |
+| Article reader | Prototype | Extracts original story pages into native Emacs buffers with window-scaled images and block translation. |
 | Comment UX | Done | Keyboard folding, inline `N more`, quote rendering, author styling. |
 | Translation | Done | `llm.el`, `t`/`T`, in-place replacement, SQLite cache, pruning. |
 | Point preservation | Done | Translation toggle keeps point in the current comment. |
@@ -186,6 +187,19 @@ Secondary user:
 - Profile activity items should support the same open, bookmark, upvote, reply,
   and translation commands as feed/thread items where applicable.
 
+### Article Reader
+
+- `a` opens the original story URL in an Emacs-native article reader buffer.
+- Article buffers extract the main readable content from HTML rather than
+  embedding a WebView.
+- Paragraphs should remain logical lines and rely on Emacs visual wrapping.
+- Images should shrink to the current window width when their displayed size is
+  too large, without enlarging small images.
+- `t` toggles the title or readable block at point.
+- `T` toggles the article title and all readable text blocks.
+- Article translations reuse the shared LLM transport, visibility state,
+  asynchronous queue, and SQLite translation cache.
+
 ## 7. UX Requirements
 
 - Use `special-mode` for read-only UI buffers.
@@ -205,18 +219,19 @@ Secondary user:
 
 | Key | Scope | Action |
 | --- | --- | --- |
-| `g` | feed/thread/inbox/profile | Refresh |
+| `g` | feed/thread/inbox/profile/article | Refresh |
 | `f` | feed/profile | Switch feed or profile section |
-| `1`-`7` | feed | Open fixed feed |
+| `1`-`6` | feed | Open fixed feed |
 | `1`-`6` | profile | Open fixed profile section |
-| `RET` | feed/thread/profile | Open thread, item, or URL |
-| `o` | feed/thread/inbox/profile | Open original URL |
-| `e` | feed/thread/inbox/profile | Open original URL in EWW |
+| `RET` | feed/thread/profile/article | Open thread, item, URL, or link |
+| `o` | feed/thread/inbox/profile/article | Open original URL |
+| `e` | feed/thread/inbox/profile/article | Open original URL in EWW |
+| `a` | feed/thread/inbox/profile | Open article reader |
 | `b` | feed/thread/profile | Toggle bookmark |
 | `u` | feed/thread/inbox/profile | Upvote item |
 | `r` | feed/thread/inbox/profile | Reply |
-| `t` | feed/thread/inbox/profile | Toggle item translation |
-| `T` | feed/thread/inbox/profile | Toggle visible item translations |
+| `t` | feed/thread/inbox/profile/article | Toggle item or article block translation |
+| `T` | feed/thread/inbox/profile/article | Toggle visible item or article translations |
 | `TAB` | thread | Fold/unfold comment |
 | `+` | thread | Load more comments |
 | `*` | thread | Load all comments |

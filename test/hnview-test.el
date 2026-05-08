@@ -54,6 +54,8 @@
               #'hnview-open-item))
   (should (eq (lookup-key hnview-feed-mode-map (kbd "e"))
               #'hnview-open-url-eww))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "a"))
+              #'hnview-open-article))
   (should (eq (lookup-key hnview-feed-mode-map (kbd "r"))
               #'hnview-reply-at-point))
   (should (eq (lookup-key hnview-feed-mode-map (kbd "u"))
@@ -80,6 +82,8 @@
               #'hnview-load-all-comments))
   (should (eq (lookup-key hnview-thread-mode-map (kbd "r"))
               #'hnview-reply-at-point))
+  (should (eq (lookup-key hnview-thread-mode-map (kbd "a"))
+              #'hnview-open-article))
   (should (eq (lookup-key hnview-thread-mode-map (kbd "u"))
               #'hnview-vote-up))
   (should (eq (lookup-key hnview-thread-mode-map (kbd "TAB"))
@@ -106,8 +110,25 @@
               #'hnview-profile-hidden))
   (should (eq (lookup-key hnview-profile-mode-map (kbd "RET"))
               #'hnview-open-item))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "a"))
+              #'hnview-open-article))
   (should (eq (lookup-key hnview-profile-mode-map (kbd "t"))
               #'hnview-translate-at-point)))
+
+(ert-deftest hnview-article-mode-has-reader-keys ()
+  "Article buffers should expose reader commands."
+  (should (eq (lookup-key hnview-article-mode-map (kbd "g"))
+              #'hnview-article-refresh))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "o"))
+              #'hnview-article-open-url))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "e"))
+              #'hnview-article-open-eww))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "i"))
+              #'hnview-article-toggle-images))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "t"))
+              #'hnview-article-translate-at-point))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "T"))
+              #'hnview-article-translate-visible)))
 
 (ert-deftest hnview-profile-section-label-reads-simple-alist ()
   "Profile section labels should read simple section pairs."
@@ -147,6 +168,244 @@
         (goto-char (point-min))
         (hnview-open-url-eww)))
     (should (equal opened "https://example.com"))))
+
+(ert-deftest hnview-open-article-fetches-item-url ()
+  "Opening article mode should fetch the item URL."
+  (let ((story '(:id 1 :type "story" :title "Story"
+                     :url "https://example.com/article"))
+        fetched-url)
+    (cl-letf (((symbol-function 'hnview--url-text)
+               (lambda (url callback &optional _method _fields)
+                 (setq fetched-url url)
+                 (funcall callback nil
+                          "<html><body><main><p>This article has enough readable text to be selected as the main content by the reader prototype.</p></main></body></html>"))))
+      (with-temp-buffer
+        (hnview--insert-story story 1)
+        (goto-char (point-min))
+        (hnview-open-article)
+        (should (equal fetched-url "https://example.com/article"))
+        (should (derived-mode-p 'hnview-article-mode))))))
+
+(ert-deftest hnview-readability-extracts-main-content ()
+  "Readability extraction should prefer main content over page chrome."
+  (let* ((html "<html><head>
+<meta property='og:title' content='Useful Article'>
+<meta property='og:site_name' content='Example'>
+<meta name='author' content='Ada'>
+</head><body>
+<nav>Home Pricing Login</nav>
+<main class='article-content'>
+<h1>Useful Article</h1>
+<p>This is the first substantial paragraph, written with enough words to look like actual article body rather than navigation or page chrome.</p>
+<aside>Subscribe to our newsletter</aside>
+<p>This second paragraph continues the real article and should remain after readability cleanup has removed unrelated material.</p>
+</main>
+<div class='comments'><p>This reader comment should not be part of the article.</p></div>
+</body></html>")
+         (article (hnview--readability-extract
+                   html "https://example.com/article"))
+         (text (hnview--readability-node-text
+                (plist-get article :content-dom))))
+    (should (equal (plist-get article :title) "Useful Article"))
+    (should (equal (plist-get article :site) "Example"))
+    (should (equal (plist-get article :byline) "Ada"))
+    (should (string-match-p "first substantial paragraph" text))
+    (should (string-match-p "second paragraph" text))
+    (should-not (string-match-p "Pricing" text))
+    (should-not (string-match-p "newsletter" text))
+    (should-not (string-match-p "reader comment" text))))
+
+(ert-deftest hnview-readability-normalizes-lazy-images ()
+  "Readability extraction should preserve lazy-loaded article images."
+  (let* ((html "<html><body>
+<main class='post-content'>
+<p>This substantial paragraph gives the image enough surrounding article text so the main node is selected by scoring.</p>
+<img data-src='https://example.com/image.jpg' width='1200' height='800' alt='Example image'>
+</main>
+</body></html>")
+         (article (hnview--readability-extract
+                   html "https://example.com/article"))
+         (image (car (dom-by-tag (plist-get article :content-dom) 'img))))
+    (should image)
+    (should (equal (dom-attr image 'src)
+                   "https://example.com/image.jpg"))))
+
+(ert-deftest hnview-article-rendering-keeps-paragraphs-logical ()
+  "Article rendering should let Emacs wrap paragraph lines visually."
+  (let* ((paragraph
+          "This long paragraph is intentionally longer than the configured article width so the reader can prove it does not insert hard newlines into ordinary prose and instead leaves visual wrapping to Emacs.")
+         (html (format "<html><body><main class='post-content'><p>%s</p></main></body></html>"
+                       paragraph))
+         (article (hnview--readability-extract
+                   html "https://example.com/article"))
+         (hnview-article-width 24))
+    (with-temp-buffer
+      (hnview-article-mode)
+      (setq-local hnview--article-images-visible-p nil)
+      (let ((inhibit-read-only t))
+        (hnview--insert-article-content article))
+      (goto-char (point-min))
+      (should (search-forward paragraph nil t)))))
+
+(ert-deftest hnview-article-image-width-follows-window ()
+  "Article image width should follow the current window, not article width."
+  (let ((hnview-article-width 24)
+        (char-width (frame-char-width)))
+    (cl-letf (((symbol-function 'hnview--article-window-width-pixels)
+               (lambda () 900)))
+      (should (= (hnview--article-image-max-width-pixels)
+                 (max 80 (- 900 (* 2 char-width))))))))
+
+(ert-deftest hnview-article-rendering-shows-cached-translation ()
+  "Article rendering should replace visible cached body translations."
+  (let* ((paragraph
+          "This paragraph should have a cached translation in article mode.")
+         (html (format "<html><body><main><p>%s</p></main></body></html>"
+                       paragraph))
+         (article (hnview--readability-extract
+                   html "https://example.com/article"))
+         (item (car (hnview--article-body-items article)))
+         (hnview--translations (make-hash-table :test #'equal))
+         (hnview--hidden-translations (make-hash-table :test #'equal)))
+    (puthash (hnview--translation-key item paragraph 'text)
+             "这段文章已经缓存了译文。"
+             hnview--translations)
+    (with-temp-buffer
+      (hnview-article-mode)
+      (setq-local hnview--article article)
+      (hnview--set-item-translation-hidden item nil)
+      (let ((inhibit-read-only t))
+        (hnview--render-article))
+      (goto-char (point-min))
+      (should (search-forward "这段文章已经缓存了译文。" nil t))
+      (should-not (search-forward paragraph nil t)))))
+
+(ert-deftest hnview-article-refresh-keeps-existing-content-visible ()
+  "Article loading status should not replace already rendered content."
+  (let* ((paragraph "Existing article content should remain visible during refresh.")
+         (html (format "<html><body><main><p>%s</p></main></body></html>"
+                       paragraph))
+         (article (hnview--readability-extract
+                   html "https://example.com/article")))
+    (with-temp-buffer
+      (hnview-article-mode)
+      (setq-local hnview--article article)
+      (setq-local hnview--article-loading-message "Loading article...")
+      (hnview--render-article)
+      (goto-char (point-min))
+      (should (search-forward "Loading article..." nil t))
+      (should (search-forward paragraph nil t)))))
+
+(ert-deftest hnview-article-translate-at-point-toggles-cached-block ()
+  "Article t should toggle the block at point between original and translation."
+  (hnview-test-with-db
+    (let* ((paragraph
+            "This paragraph toggles through the article translation command.")
+           (html (format "<html><body><main><p>%s</p></main></body></html>"
+                         paragraph))
+           (article (hnview--readability-extract
+                     html "https://example.com/article"))
+           (item (car (hnview--article-body-items article))))
+      (hnview--ensure-db)
+      (setq hnview--state-loaded-p t)
+      (puthash (hnview--translation-key item paragraph 'text)
+               "这段文字通过文章翻译命令切换。"
+               hnview--translations)
+      (with-temp-buffer
+        (hnview-article-mode)
+        (setq-local hnview--article article)
+        (hnview--render-article)
+        (goto-char (point-min))
+        (search-forward paragraph)
+        (hnview-article-translate-at-point)
+        (goto-char (point-min))
+        (should (search-forward "这段文字通过文章翻译命令切换。" nil t))
+        (hnview-article-translate-at-point)
+        (goto-char (point-min))
+        (should (search-forward paragraph nil t))))))
+
+(ert-deftest hnview-article-translate-visible-toggles-cached-title-and-body ()
+  "Article T should toggle cached title and body translations together."
+  (hnview-test-with-db
+    (let* ((title "Original Article Title")
+           (paragraph "This body paragraph has a cached article translation.")
+           (html (format "<html><head><title>%s</title></head><body><main><p>%s</p></main></body></html>"
+                         title paragraph))
+           (article (hnview--readability-extract
+                     html "https://example.com/article"))
+           (title-item (hnview--article-title-item article))
+           (body-item (car (hnview--article-body-items article))))
+      (hnview--ensure-db)
+      (setq hnview--state-loaded-p t)
+      (puthash (hnview--translation-key title-item title 'text)
+               "原始文章标题"
+               hnview--translations)
+      (puthash (hnview--translation-key body-item paragraph 'text)
+               "正文段落已有文章译文。"
+               hnview--translations)
+      (with-temp-buffer
+        (hnview-article-mode)
+        (setq-local hnview--article article)
+        (hnview--render-article)
+        (hnview-article-translate-visible)
+        (goto-char (point-min))
+        (should (search-forward "原始文章标题" nil t))
+        (should (search-forward "正文段落已有文章译文。" nil t))
+        (hnview-article-translate-visible)
+        (goto-char (point-min))
+        (should (search-forward title nil t))
+        (should (search-forward paragraph nil t))))))
+
+(ert-deftest hnview-article-toggle-images-preserves-block-point ()
+  "Article image toggling should preserve point in the current block."
+  (let* ((first "First article paragraph with enough text to render.")
+         (second "Second article paragraph should keep point after image toggle.")
+         (html (format "<html><body><main><p>%s</p><p>%s</p></main></body></html>"
+                       first second))
+         (article (hnview--readability-extract
+                   html "https://example.com/article")))
+    (with-temp-buffer
+      (hnview-article-mode)
+      (setq-local hnview--article article)
+      (hnview--render-article)
+      (goto-char (point-min))
+      (search-forward second)
+      (hnview-article-toggle-images)
+      (should (string-match-p
+               (regexp-quote second)
+               (buffer-substring (line-beginning-position)
+                                 (line-end-position)))))))
+
+(ert-deftest hnview-article-pending-count-includes-article-items ()
+  "Article translation progress should appear in the mode-line count."
+  (let* ((paragraph "This article paragraph is currently being translated.")
+         (html (format "<html><body><main><p>%s</p></main></body></html>"
+                       paragraph))
+         (article (hnview--readability-extract
+                   html "https://example.com/article"))
+         (item (car (hnview--article-body-items article)))
+         (hnview--pending-translations (make-hash-table :test #'equal)))
+    (puthash (hnview--translation-key item paragraph 'text)
+             t hnview--pending-translations)
+    (with-temp-buffer
+      (hnview-article-mode)
+      (setq-local hnview--article article)
+      (should (= (hnview--buffer-pending-translation-count) 1)))))
+
+(ert-deftest hnview-fetch-article-ignores-stale-response ()
+  "Article fetch callbacks should not update buffers now showing another URL."
+  (cl-letf (((symbol-function 'hnview--url-text)
+             (lambda (_url callback &optional _method _fields)
+               (funcall callback nil
+                        "<html><body><main><p>Old article body.</p></main></body></html>"))))
+    (with-temp-buffer
+      (hnview-article-mode)
+      (setq-local hnview--article-url "https://example.com/new")
+      (setq-local hnview--article-loading-message "Loading newer article...")
+      (setq-local hnview--article nil)
+      (hnview--fetch-article "https://example.com/old" (current-buffer))
+      (should (equal hnview--article-loading-message "Loading newer article..."))
+      (should-not hnview--article))))
 
 (ert-deftest hnview-translation-key-uses-target-language ()
   "Translation keys should change when target language changes."
@@ -220,6 +479,35 @@
     (should (equal result "一个标题"))
     (should (equal (hnview--cached-translation story 'title "A title")
                    "一个标题"))))
+
+(ert-deftest hnview-translate-unit-caches-and-persists-result ()
+  "Translation units should cache and persist without an hnview item plist."
+  (hnview-test-with-db
+    (let* ((unit (hnview--translation-unit
+                  "external:hello" 'text "Hello" nil))
+           seen-text
+           seen-target
+           error
+           result)
+      (hnview--ensure-db)
+      (cl-letf (((symbol-function 'hnview--translate-text)
+                 (lambda (text callback &optional target-language)
+                   (setq seen-text text)
+                   (setq seen-target target-language)
+                   (funcall callback nil "你好"))))
+        (hnview--translate-unit
+         unit
+         (lambda (err translation)
+           (setq error err)
+           (setq result translation))))
+      (should (equal seen-text "Hello"))
+      (should (equal seen-target hnview-translate-target-language))
+      (should-not error)
+      (should (equal result "你好"))
+      (should (equal (hnview--cached-translation-unit unit) "你好"))
+      (clrhash hnview--translations)
+      (hnview--load-db-state)
+      (should (equal (hnview--cached-translation-unit unit) "你好")))))
 
 (ert-deftest hnview-empty-translation-renders-source-text ()
   "Empty cached translations should render the source text."
@@ -781,6 +1069,26 @@
   (should (equal (hnview--translation-segments
                   '(:id 1 :type "story" :title "Title" :text "Body"))
                  '((title . "Title") (text . "Body")))))
+
+(ert-deftest hnview-translation-units-adapt-story-segments ()
+  "Story translation units should preserve source identity and segment data."
+  (let* ((story '(:id 42 :type "story" :title "Title" :text "Body"))
+         (units (hnview--translation-units story))
+         (title (car units))
+         (body (cadr units)))
+    (should (equal (plist-get title :id) "42"))
+    (should (equal (plist-get title :item-id) 42))
+    (should (eq (plist-get title :segment) 'title))
+    (should (equal (plist-get title :source) "Title"))
+    (should (eq (plist-get body :segment) 'text))
+    (should (equal (plist-get body :source) "Body"))))
+
+(ert-deftest hnview-translation-unit-key-matches-item-wrapper ()
+  "Translation unit cache keys should match the item adapter key."
+  (let* ((story '(:id 42 :type "story" :title "Title"))
+         (unit (hnview--translation-unit "42" 'title "Title" 42)))
+    (should (equal (hnview--translation-unit-cache-key unit)
+                   (hnview--translation-key story "Title" 'title)))))
 
 (ert-deftest hnview-html-to-text-collapses-soft-wrapped-lines ()
   "HTML conversion should let Emacs do visual wrapping for paragraphs."
