@@ -125,9 +125,13 @@ Secondary user:
 - `T` toggles translation for all visible items.
 - Missing translations started by `T` must run asynchronously and must not
   block normal Emacs interaction.
+- Batch translation should throttle concurrent item requests through
+  `hnview-translation-concurrency`.
 - Translation replaces text in place while preserving layout.
 - Pending translations should keep original text visible and report progress
   in the mode line instead of inserting inline loading text.
+- Async translation callbacks should preserve the current point, not the point
+  from when the batch was started.
 - Toggling translation from any point in a comment should work, including
   paragraph blank lines.
 - Toggling translation should preserve point within the current item.

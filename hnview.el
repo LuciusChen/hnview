@@ -100,6 +100,11 @@ Use identical source and target strings for terms that should stay unchanged."
                        (string :tag "Preferred rendering")))
   :group 'hnview)
 
+(defcustom hnview-translation-concurrency 2
+  "Maximum number of item translation requests to run concurrently."
+  :type 'natnum
+  :group 'hnview)
+
 (defcustom hnview-auto-translate-feed nil
   "Whether to automatically translate feed stories after loading."
   :type 'boolean
@@ -3128,7 +3133,7 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
            (message "%s" error))
          (when (buffer-live-p buffer)
            (with-current-buffer buffer
-             (hnview--rerender-current-buffer state)))))))))
+             (hnview--rerender-current-buffer t)))))))))
 
 (defun hnview-translate-visible ()
   "Toggle translation for visible hnview titles and comments."
@@ -3158,29 +3163,47 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
 
 (defun hnview--translate-items (items buffer &optional point-state generation)
   "Translate ITEMS for BUFFER without blocking the current command.
-When POINT-STATE is non-nil, use it while rerendering BUFFER.
+POINT-STATE is accepted for compatibility but callbacks preserve current point.
 When GENERATION is non-nil, stop scheduling items if that visible translation
 generation is no longer active."
-  (let ((queue (copy-sequence items)))
+  (ignore point-state)
+  (let ((queue (copy-sequence items))
+        (active 0)
+        (concurrency (max 1 hnview-translation-concurrency)))
     (cl-labels
-        ((step ()
-           (when (and queue
-                      (buffer-live-p buffer)
-                      (hnview--translation-batch-active-p buffer generation))
-             (let ((item (pop queue)))
-               (with-current-buffer buffer
-                 (hnview--set-item-translation-hidden item nil))
-               (hnview--translate-item
-                item
-                (lambda (error _translation)
-                  (when error
-                    (message "%s" error))
-                  (when (buffer-live-p buffer)
-                    (with-current-buffer buffer
-                      (hnview--rerender-current-buffer
-                       (or point-state t)))))))
+        ((schedule ()
+           (run-at-time 0.05 nil #'step))
+         (active-p ()
+           (and (buffer-live-p buffer)
+                (hnview--translation-batch-active-p buffer generation)))
+         (finish (error)
+           (when error
+             (message "%s" error))
+           (setq active (max 0 (1- active)))
+           (when (active-p)
+             (with-current-buffer buffer
+               (hnview--rerender-current-buffer t))
              (when queue
-               (run-at-time 0 nil #'step)))))
+               (schedule))))
+         (step ()
+           (when (and queue
+                      (active-p))
+             (let ((started 0))
+               (while (and queue
+                           (< active concurrency)
+                           (< started concurrency))
+                 (cl-incf started)
+                 (cl-incf active)
+                 (let ((item (pop queue)))
+                   (with-current-buffer buffer
+                     (hnview--set-item-translation-hidden item nil))
+                   (hnview--translate-item
+                    item
+                    (lambda (error _translation)
+                      (finish error))))))
+             (when (and queue
+                        (< active concurrency))
+               (schedule)))))
       (run-at-time 0 nil #'step))))
 
 (defun hnview--translation-batch-active-p (buffer generation)

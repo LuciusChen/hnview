@@ -175,7 +175,9 @@ translations asynchronously. Translated text replaces the original text in
 place and keeps the existing story/comment layout: metadata, status markers,
 indentation, and comment hierarchy stay unchanged. While translations are
 pending, the original text stays visible and the mode line shows the pending
-translation count. Successful translations are cached in the SQLite database at
+translation count. Batch translation is throttled by
+`hnview-translation-concurrency` so `T` does not start every visible comment at
+once. Successful translations are cached in the SQLite database at
 `hnview-database-file`. Cached translations do not replace originals by default
 unless `hnview-translate-by-default` is enabled or you toggle translation with
 `t`/`T`.

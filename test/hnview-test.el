@@ -1159,6 +1159,61 @@
         (funcall (pop scheduled))
         (should translated)))))
 
+(ert-deftest hnview-translate-items-respects-concurrency ()
+  "Batch translation should not start every visible item at once."
+  (let ((first '(:id 1 :type "story" :title "First"))
+        (second '(:id 2 :type "story" :title "Second"))
+        (hnview-translation-concurrency 1)
+        scheduled
+        started
+        callbacks)
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_secs _repeat function &rest args)
+                 (push (lambda () (apply function args)) scheduled)
+                 'timer))
+              ((symbol-function 'hnview--translate-item)
+               (lambda (item callback)
+                 (push item started)
+                 (push callback callbacks))))
+      (with-temp-buffer
+        (hnview--translate-items (list first second) (current-buffer))
+        (funcall (pop scheduled))
+        (should (equal (mapcar (lambda (item) (plist-get item :id)) started)
+                       '(1)))
+        (funcall (pop callbacks) nil t)
+        (funcall (pop scheduled))
+        (should (equal (mapcar (lambda (item) (plist-get item :id)) started)
+                       '(2 1)))))))
+
+(ert-deftest hnview-translate-visible-callback-preserves-current-point ()
+  "Visible translation callbacks should preserve the current point."
+  (let ((first '(:id 1 :type "story" :title "First"))
+        (second '(:id 2 :type "story" :title "Second"))
+        (hnview--translations (make-hash-table :test #'equal))
+        (hnview--state-loaded-p t)
+        (hnview-translation-concurrency 1)
+        scheduled
+        callbacks)
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_secs _repeat function &rest args)
+                 (push (lambda () (apply function args)) scheduled)
+                 'timer))
+              ((symbol-function 'hnview--translate-item)
+               (lambda (_item callback)
+                 (push callback callbacks))))
+      (with-temp-buffer
+        (hnview-feed-mode)
+        (setq-local hnview--stories (list first second))
+        (hnview--render-feed)
+        (goto-char (point-min))
+        (search-forward "First")
+        (hnview-translate-visible)
+        (funcall (pop scheduled))
+        (goto-char (point-min))
+        (search-forward "Second")
+        (funcall (pop callbacks) nil t)
+        (should (equal (plist-get (hnview--item-at-point) :id) 2))))))
+
 (ert-deftest hnview-translate-visible-cancels-queued-work-when-hidden ()
   "Second T should cancel queued visible translation work."
   (let ((story '(:id 1 :type "story" :title "First"))
