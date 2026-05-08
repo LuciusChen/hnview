@@ -181,6 +181,7 @@
   (let ((story '(:id 42 :type "story" :title "A title"))
         (hnview--translations (make-hash-table :test #'equal))
         (hnview--pending-translations (make-hash-table :test #'equal))
+        (hnview-translation-empty-retry-count 0)
         error
         result)
     (cl-letf (((symbol-function 'hnview--translate-text)
@@ -194,6 +195,31 @@
     (should (equal error "Translation returned empty text"))
     (should-not result)
     (should-not (hnview--cached-translation story 'title "A title"))))
+
+(ert-deftest hnview-translate-segment-retries-empty-text ()
+  "Empty translation results should be retried before failing."
+  (let ((story '(:id 42 :type "story" :title "A title"))
+        (hnview--translations (make-hash-table :test #'equal))
+        (hnview--pending-translations (make-hash-table :test #'equal))
+        (hnview-translation-empty-retry-count 1)
+        (calls 0)
+        error
+        result)
+    (cl-letf (((symbol-function 'hnview--translate-text)
+               (lambda (_text callback &optional _target-language)
+                 (cl-incf calls)
+                 (funcall callback nil
+                          (if (= calls 1) "" "一个标题")))))
+      (hnview--translate-segment
+       story 'title "A title"
+       (lambda (err translation)
+         (setq error err)
+         (setq result translation))))
+    (should (= calls 2))
+    (should-not error)
+    (should (equal result "一个标题"))
+    (should (equal (hnview--cached-translation story 'title "A title")
+                   "一个标题"))))
 
 (ert-deftest hnview-empty-translation-renders-source-text ()
   "Empty cached translations should render the source text."

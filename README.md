@@ -177,13 +177,15 @@ indentation, and comment hierarchy stay unchanged. While translations are
 pending, the original text stays visible and the mode line shows the pending
 translation count. Batch translation is throttled by
 `hnview-translation-concurrency` so `T` does not start every visible comment at
-once. Successful translations are cached in the SQLite database at
-`hnview-database-file`. Cached translations do not replace originals by default
-unless `hnview-translate-by-default` is enabled or you toggle translation with
-`t`/`T`. Cache hits are served from SQLite without calling the LLM provider, so
-showing an already cached translation does not consume API tokens. Changing the
-target language, prompt template, glossary, backend, or source text creates a
-different cache key and may trigger a new translation request.
+once. Empty translation results are retried according to
+`hnview-translation-empty-retry-count` and are not cached. Successful
+translations are cached in the SQLite database at `hnview-database-file`.
+Cached translations do not replace originals by default unless
+`hnview-translate-by-default` is enabled or you toggle translation with `t`/`T`.
+Cache hits are served from SQLite without calling the LLM provider, so showing
+an already cached translation does not consume API tokens. Changing the target
+language, prompt template, glossary, backend, or source text creates a different
+cache key and may trigger a new translation request.
 
 Upvoting uses Hacker News' logged-in vote endpoint. Run `M-x hnview-login`
 first. After a successful `u` vote, hnview shows `△` as a session-local status

@@ -105,6 +105,11 @@ Use identical source and target strings for terms that should stay unchanged."
   :type 'natnum
   :group 'hnview)
 
+(defcustom hnview-translation-empty-retry-count 1
+  "Number of times to retry when a translation returns empty text."
+  :type 'natnum
+  :group 'hnview)
+
 (defcustom hnview-auto-translate-feed nil
   "Whether to automatically translate feed stories after loading."
   :type 'boolean
@@ -1842,18 +1847,40 @@ REMAINING is a mutable one-item list containing the fetch budget."
   (let ((key (hnview--translation-key item text segment)))
     (puthash key t hnview--pending-translations)
     (force-mode-line-update t)
-    (hnview--translate-text
+    (hnview--translate-text-with-empty-retry
      text
        (lambda (error translation)
          (remhash key hnview--pending-translations)
          (force-mode-line-update t)
-         (setq translation (hnview--usable-translation translation))
-         (when (and (not error) (null translation))
-           (setq error "Translation returned empty text"))
          (when translation
            (puthash key translation hnview--translations)
            (hnview--persist-translation item segment text translation))
          (funcall callback error translation)))))
+
+(defun hnview--translate-text-with-empty-retry
+    (text callback &optional target-language retries)
+  "Translate TEXT, retrying empty results before calling CALLBACK.
+TARGET-LANGUAGE is passed to `hnview--translate-text'.  RETRIES overrides
+`hnview-translation-empty-retry-count'."
+  (let ((remaining (or retries hnview-translation-empty-retry-count)))
+    (cl-labels
+        ((attempt ()
+           (hnview--translate-text
+            text
+            (lambda (error translation)
+              (setq translation (hnview--usable-translation translation))
+              (cond
+               (error
+                (funcall callback error nil))
+               (translation
+                (funcall callback nil translation))
+               ((> remaining 0)
+                (cl-decf remaining)
+                (attempt))
+               (t
+                (funcall callback "Translation returned empty text" nil))))
+            target-language)))
+      (attempt))))
 
 (defun hnview--persist-translation (item segment source translation)
   "Persist ITEM SEGMENT SOURCE TRANSLATION."
