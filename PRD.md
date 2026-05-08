@@ -93,7 +93,7 @@ Secondary user:
 
 ### 6.3 Comment Interaction
 
-- Navigate between items with `n` and `p`.
+- Navigate between items with `n`/`p`.
 - Fold/unfold comments with `TAB`.
 - Show folded comments as inline metadata, for example:
 
@@ -206,6 +206,8 @@ Secondary user:
 - Keep UI dense and readable.
 - Prefer faces and text properties over decorative UI.
 - Avoid web-style cards and heavy chrome.
+- When Evil is active, hnview should enter Emacs state for read-only buffers so
+  the native hnview keymap works without an Evil dependency.
 - Keep comments visually aligned:
   - fold marker
   - optional local status marker
@@ -235,7 +237,8 @@ Secondary user:
 | `TAB` | thread | Fold/unfold comment |
 | `+` | thread | Load more comments |
 | `*` | thread | Load all comments |
-| `n`/`p` | feed/thread/inbox | Next/previous item |
+| `n`/`p` | feed/thread/inbox/profile | Next/previous item |
+| `q` | feed/thread/inbox/profile/article | Quit buffer |
 | `C-c C-t` | reply | Translate draft |
 | `C-c C-c` | reply | Submit draft |
 | `C-c C-k` | reply | Cancel draft |

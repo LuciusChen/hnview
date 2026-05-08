@@ -80,6 +80,12 @@ Key bindings:
 | `+` | Load more comments in a thread |
 | `*` | Load all comments in a thread |
 | `n` / `p` | Move between items |
+| `q` | Quit the current hnview buffer |
+
+When Evil is active, hnview buffers enter Emacs state by default so the native
+read-only keymap above works unchanged.  Set
+`hnview-use-emacs-state-in-evil` to nil if you prefer to manage Evil state
+yourself.
 
 In profile buffers:
 

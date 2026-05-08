@@ -37,7 +37,10 @@
 (declare-function plz-response-headers "plz")
 (declare-function plz-response-status "plz")
 (declare-function eww "eww")
+(declare-function evil-emacs-state "evil")
+(declare-function evil-set-initial-state "evil")
 (defvar plz-curl-default-args)
+(defvar evil-local-mode)
 
 (defgroup hnview nil
   "Modern Hacker News reader with translation."
@@ -230,6 +233,13 @@ Article paragraphs are rendered as logical lines and wrapped by Emacs."
   :type 'natnum
   :group 'hnview)
 
+(defcustom hnview-use-emacs-state-in-evil t
+  "Whether hnview buffers enter Emacs state when Evil is active.
+This keeps hnview's native single-key commands, including g, t, T, and
+q, available in read-only buffers."
+  :type 'boolean
+  :group 'hnview)
+
 (defface hnview-date-main
   '((t :inherit variable-pitch :height 1.8 :weight bold))
   "Face for the main date word."
@@ -380,6 +390,7 @@ Article paragraphs are rendered as logical lines and wrapped by Emacs."
     (define-key map (kbd "T") #'hnview-translate-visible)
     (define-key map (kbd "n") #'hnview-next-item)
     (define-key map (kbd "p") #'hnview-previous-item)
+    (define-key map (kbd "q") #'quit-window)
     map)
   "Keymap for `hnview-feed-mode'.")
 
@@ -400,6 +411,7 @@ Article paragraphs are rendered as logical lines and wrapped by Emacs."
     (define-key map (kbd "T") #'hnview-translate-visible)
     (define-key map (kbd "n") #'hnview-next-item)
     (define-key map (kbd "p") #'hnview-previous-item)
+    (define-key map (kbd "q") #'quit-window)
     map)
   "Keymap for `hnview-thread-mode'.")
 
@@ -416,6 +428,7 @@ Article paragraphs are rendered as logical lines and wrapped by Emacs."
     (define-key map (kbd "T") #'hnview-translate-visible)
     (define-key map (kbd "n") #'hnview-next-item)
     (define-key map (kbd "p") #'hnview-previous-item)
+    (define-key map (kbd "q") #'quit-window)
     map)
   "Keymap for `hnview-inbox-mode'.")
 
@@ -440,6 +453,7 @@ Article paragraphs are rendered as logical lines and wrapped by Emacs."
     (define-key map (kbd "T") #'hnview-translate-visible)
     (define-key map (kbd "n") #'hnview-next-item)
     (define-key map (kbd "p") #'hnview-previous-item)
+    (define-key map (kbd "q") #'quit-window)
     map)
   "Keymap for `hnview-profile-mode'.")
 
@@ -469,6 +483,15 @@ Article paragraphs are rendered as logical lines and wrapped by Emacs."
     (define-key map (kbd "I") #'shr-browse-image)
     map)
   "Keymap for `hnview-article-mode'.")
+
+(defun hnview--maybe-enter-emacs-state-in-evil ()
+  "Use Emacs state for hnview buffers when Evil is active."
+  (when hnview-use-emacs-state-in-evil
+    (when (fboundp 'evil-set-initial-state)
+      (evil-set-initial-state major-mode 'emacs))
+    (when (and (bound-and-true-p evil-local-mode)
+               (fboundp 'evil-emacs-state))
+      (evil-emacs-state))))
 
 ;;; State
 
@@ -1766,6 +1789,10 @@ REMAINING is a mutable one-item list containing the fetch budget."
   "\\(?:\\`\\|[-_[:space:]]\\)\\(?:article\\|body\\|content\\|entry\\|hentry\\|main\\|page\\|post\\|story\\|text\\)\\(?:\\'\\|[-_[:space:]]\\)"
   "Regular expression matching promising content attributes.")
 
+(defconst hnview--readability-body-regexp
+  "\\(?:\\`\\|[-_[:space:]]\\)\\(?:article[-_]?body\\|article[-_]?content\\|entry[-_]?content\\|post[-_]?content\\|rich[-_]?text[-_]?body\\|rich[-_]?text[-_]?story[-_]?body\\|story[-_]?body\\)\\(?:\\'\\|[-_[:space:]]\\)"
+  "Regular expression matching likely article-body attributes.")
+
 (defconst hnview--readability-negative-regexp
   "\\(?:\\`\\|[-_[:space:]]\\)\\(?:ad\\|ads\\|advert\\|banner\\|breadcrumb\\|comment\\|comments\\|cookie\\|footer\\|header\\|menu\\|modal\\|nav\\|newsletter\\|popup\\|promo\\|related\\|share\\|sidebar\\|social\\|sponsor\\|subscribe\\)\\(?:\\'\\|[-_[:space:]]\\)"
   "Regular expression matching likely page chrome attributes.")
@@ -1780,27 +1807,35 @@ REMAINING is a mutable one-item list containing the fetch budget."
   (unless (fboundp 'libxml-parse-html-region)
     (user-error "This Emacs was not built with libxml2 support"))
   (let* ((dom (hnview--readability-parse-html html))
+         (json-article (hnview--readability-json-ld-article dom))
          (title (hnview--readability-title dom))
          (site (or (hnview--readability-meta-content
                     dom '("og:site_name" "application-name"))
                    (hnview--readability-host url)))
-         (byline (or (hnview--readability-meta-content
+         (byline (or (hnview--readability-json-ld-byline json-article)
+                     (hnview--readability-meta-content
                       dom '("author" "article:author" "twitter:creator"))
                      (hnview--readability-text-by-attribute
                       dom "\\_<\\(?:author\\|byline\\|by-line\\)\\_>")))
-         (published (hnview--readability-meta-content
-                     dom '("article:published_time" "date"
-                           "datepublished" "pubdate"
-                           "publishdate" "timestamp")))
+         (published (or (hnview--readability-meta-content
+                         dom '("article:published_time" "date"
+                               "datepublished" "pubdate"
+                               "publishdate" "timestamp"))
+                        (hnview--readability-json-ld-string
+                         json-article :datePublished)))
          (description (hnview--readability-meta-content
                        dom '("description" "og:description"
                              "twitter:description"))))
     (hnview--readability-normalize-dom dom)
     (hnview--readability-clean-dom dom)
-    (let* ((content (or (hnview--readability-best-candidate dom)
+    (let* ((content (or (hnview--readability-json-ld-content-dom
+                         json-article)
+                        (hnview--readability-best-candidate dom)
                         (car (dom-by-tag dom 'body))
                         dom))
            (title (or title
+                      (hnview--readability-json-ld-string
+                       json-article :headline)
                       (hnview--readability-first-heading content)
                       (hnview--readability-host url)
                       url))
@@ -1820,6 +1855,160 @@ REMAINING is a mutable one-item list containing the fetch budget."
   (with-temp-buffer
     (insert (or html ""))
     (libxml-parse-html-region (point-min) (point-max))))
+
+(defun hnview--readability-json-ld-article (dom)
+  "Return the first JSON-LD article object in DOM."
+  (catch 'found
+    (dolist (script (dom-by-tag dom 'script))
+      (when (string-match-p
+             "ld\\+json"
+             (downcase (or (dom-attr script 'type) "")))
+        (when-let* ((text (hnview--readability-clean-string
+                           (hnview--readability-raw-text script))))
+          (condition-case nil
+              (when-let* ((article
+                           (hnview--readability-json-ld-find-article
+                            (json-parse-string text
+                                               :object-type 'plist
+                                               :array-type 'list
+                                               :null-object nil
+                                               :false-object nil))))
+                (throw 'found article))
+            (json-parse-error nil)
+            (error nil)))))
+    nil))
+
+(defun hnview--readability-raw-text (node)
+  "Return raw text contained in NODE without whitespace normalization."
+  (cond
+   ((null node) "")
+   ((stringp node) node)
+   ((consp node)
+    (mapconcat #'hnview--readability-raw-text (dom-children node) ""))
+   (t "")))
+
+(defun hnview--readability-json-ld-find-article (value)
+  "Return the first article-like JSON-LD object in VALUE."
+  (cond
+   ((hnview--readability-json-plist-p value)
+    (or (and (hnview--readability-json-ld-article-p value) value)
+        (cl-loop for (_key child) on value by #'cddr
+                 thereis
+                 (hnview--readability-json-ld-find-article child))))
+   ((listp value)
+    (cl-loop for child in value
+             thereis (hnview--readability-json-ld-find-article child)))
+   (t nil)))
+
+(defun hnview--readability-json-plist-p (value)
+  "Return non-nil when VALUE looks like a JSON plist object."
+  (and (consp value) (keywordp (car value))))
+
+(defun hnview--readability-json-ld-article-p (object)
+  "Return non-nil when JSON-LD OBJECT represents an article."
+  (and (hnview--readability-json-ld-type-p
+        (plist-get object :@type))
+       (or (plist-get object :headline)
+           (plist-get object :articleBody))))
+
+(defun hnview--readability-json-ld-type-p (type)
+  "Return non-nil when JSON-LD TYPE is article-like."
+  (cond
+   ((stringp type)
+    (member type '("Article" "NewsArticle" "BlogPosting" "ReportageNewsArticle")))
+   ((listp type)
+    (cl-some #'hnview--readability-json-ld-type-p type))
+   (t nil)))
+
+(defun hnview--readability-json-ld-string (object property)
+  "Return clean string from JSON-LD OBJECT PROPERTY."
+  (when (hnview--readability-json-plist-p object)
+    (hnview--readability-clean-string (plist-get object property))))
+
+(defun hnview--readability-json-ld-raw-string (object property)
+  "Return trimmed raw string from JSON-LD OBJECT PROPERTY."
+  (when (hnview--readability-json-plist-p object)
+    (when-let* ((value (plist-get object property)))
+      (let ((text (string-trim (format "%s" value))))
+        (unless (string-empty-p text)
+          text)))))
+
+(defun hnview--readability-json-ld-byline (article)
+  "Return a readable byline from JSON-LD ARTICLE."
+  (when-let* ((authors (plist-get article :author))
+              (names (hnview--readability-json-ld-author-names authors)))
+    (string-join names ", ")))
+
+(defun hnview--readability-json-ld-author-names (author-data)
+  "Return author names from JSON-LD AUTHOR-DATA."
+  (delq nil
+        (cond
+         ((stringp author-data)
+          (list (hnview--readability-clean-string author-data)))
+         ((hnview--readability-json-plist-p author-data)
+          (list (hnview--readability-json-ld-string author-data :name)))
+         ((listp author-data)
+          (mapcar
+           (lambda (author)
+             (cond
+              ((stringp author) (hnview--readability-clean-string author))
+              ((hnview--readability-json-plist-p author)
+               (hnview--readability-json-ld-string author :name))
+              (t nil)))
+           author-data))
+         (t nil))))
+
+(defun hnview--readability-json-ld-content-dom (article)
+  "Return article content DOM from JSON-LD ARTICLE body."
+  (when-let* ((body (hnview--readability-json-ld-raw-string
+                     article :articleBody)))
+    (let (children)
+      (when-let* ((image (hnview--readability-json-ld-image-url article)))
+        (push (dom-node 'img `((src . ,image))) children))
+      (dolist (node (hnview--readability-json-ld-body-nodes body))
+        (push node children))
+      (apply #'dom-node 'div '((class . "hnview-json-ld-article"))
+             (nreverse children)))))
+
+(defun hnview--readability-json-ld-image-url (article)
+  "Return the first useful image URL from JSON-LD ARTICLE."
+  (or (hnview--readability-json-ld-url
+       (plist-get article :image))
+      (hnview--readability-json-ld-url
+       (plist-get article :thumbnailUrl))))
+
+(defun hnview--readability-json-ld-url (value)
+  "Return the first URL-like string from JSON-LD VALUE."
+  (cond
+   ((stringp value) (hnview--readability-usable-url value))
+   ((hnview--readability-json-plist-p value)
+    (or (hnview--readability-json-ld-url (plist-get value :url))
+        (hnview--readability-json-ld-url (plist-get value :contentUrl))
+        (hnview--readability-json-ld-url (plist-get value :thumbnailUrl))))
+   ((listp value)
+    (cl-loop for item in value
+             thereis (hnview--readability-json-ld-url item)))
+   (t nil)))
+
+(defun hnview--readability-json-ld-body-nodes (body)
+  "Return DOM nodes for JSON-LD article BODY."
+  (let (nodes)
+    (dolist (block (split-string body "\n+" t "[ \t\n\r]+"))
+      (let ((block (string-trim block)))
+        (cond
+         ((string-match "\\`>[ \t]*\\(.+\\)\\'" block)
+          (push (dom-node 'blockquote nil
+                          (dom-node 'p nil (match-string 1 block)))
+                nodes))
+         ((string-match "\\`\\[Media:[ \t]*\\(.+?\\)\\]\\'" block)
+          (let ((url (match-string 1 block)))
+            (push (dom-node 'p nil
+                            "Media: "
+                            (dom-node 'a `((href . ,url)) url))
+                  nodes)))
+         (t
+          (push (dom-node 'p nil block) nodes)))))
+    (nreverse nodes)))
 
 (defun hnview--readability-title (dom)
   "Return the best title found in DOM."
@@ -1993,15 +2182,22 @@ REMAINING is a mutable one-item list containing the fetch budget."
 (defun hnview--readability-best-candidate (dom)
   "Return the highest-scoring readable content node from DOM."
   (let* ((candidates (hnview--readability-candidate-nodes dom))
-         (scored
-          (cl-loop for node in candidates
-                   for text = (hnview--readability-node-text node)
-                   for text-length = (length text)
-                   when (or (>= text-length hnview-article-min-text-length)
-                            (memq (dom-tag node) '(article main body)))
-                   collect (cons (hnview--readability-score node text)
-                                 node))))
-    (cdr (car (sort scored (lambda (a b) (> (car a) (car b))))))))
+         (scored (hnview--readability-scored-candidates candidates nil)))
+    (or (cdr (car (sort scored (lambda (a b) (> (car a) (car b))))))
+        (cdr (car (sort (hnview--readability-scored-candidates candidates t)
+                        (lambda (a b) (> (car a) (car b)))))))))
+
+(defun hnview--readability-scored-candidates (candidates include-body)
+  "Return scored readability CANDIDATES.
+When INCLUDE-BODY is nil, skip the top-level body so page-wide chrome does
+not outscore narrower article containers."
+  (cl-loop for node in candidates
+           for text = (hnview--readability-node-text node)
+           for text-length = (length text)
+           when (and (or include-body (not (eq (dom-tag node) 'body)))
+                     (or (>= text-length hnview-article-min-text-length)
+                         (memq (dom-tag node) '(article main body))))
+           collect (cons (hnview--readability-score node text) node)))
 
 (defun hnview--readability-candidate-nodes (dom)
   "Return DOM nodes that may contain article content."
@@ -2018,12 +2214,13 @@ REMAINING is a mutable one-item list containing the fetch budget."
          (link-density (hnview--readability-link-density node text-length))
          (paragraph-score (hnview--readability-paragraph-score node))
          (class-weight (hnview--readability-class-weight node))
+         (body-weight (hnview--readability-body-weight node))
          (tag-weight (pcase tag
                        ('article 80)
-                       ('main 60)
+                       ('main 20)
                        ('section 20)
                        ('td -20)
-                       ('body -35)
+                       ('body -160)
                        (_ 0)))
          (punctuation-score
           (* 2 (cl-count-if
@@ -2034,6 +2231,7 @@ REMAINING is a mutable one-item list containing the fetch budget."
           paragraph-score
           punctuation-score
           class-weight
+          body-weight
           tag-weight)
        (* link-density 140))))
 
@@ -2067,6 +2265,18 @@ REMAINING is a mutable one-item list containing the fetch budget."
        (if (string-match-p hnview--readability-negative-regexp attributes)
            -70
          0))))
+
+(defun hnview--readability-body-weight (node)
+  "Return extra weight for NODE attributes that name the article body."
+  (let ((attributes (hnview--readability-attribute-text node)))
+    (cond
+     ((string-match-p
+       "\\(?:\\`\\|[-_[:space:]]\\)\\(?:rich[-_]?text[-_]?body\\|rich[-_]?text[-_]?story[-_]?body\\)\\(?:\\'\\|[-_[:space:]]\\)"
+       attributes)
+      220)
+     ((string-match-p hnview--readability-body-regexp attributes)
+      100)
+     (t 0))))
 
 (defun hnview--readability-node-text (node)
   "Return normalized text contained in NODE."
@@ -4312,6 +4522,7 @@ generation is no longer active."
 
 (define-derived-mode hnview-feed-mode special-mode "hnview-feed"
   "Major mode for hnview feed buffers."
+  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines t)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
@@ -4319,6 +4530,7 @@ generation is no longer active."
 
 (define-derived-mode hnview-thread-mode special-mode "hnview-thread"
   "Major mode for hnview thread buffers."
+  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines nil)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
@@ -4326,6 +4538,7 @@ generation is no longer active."
 
 (define-derived-mode hnview-inbox-mode special-mode "hnview-inbox"
   "Major mode for hnview inbox buffers."
+  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines nil)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
@@ -4333,6 +4546,7 @@ generation is no longer active."
 
 (define-derived-mode hnview-profile-mode special-mode "hnview-profile"
   "Major mode for hnview profile buffers."
+  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines nil)
   (setq-local mode-name (hnview--profile-mode-name hnview--profile-section))
   (hnview--enable-translation-mode-line)
@@ -4341,6 +4555,7 @@ generation is no longer active."
 
 (define-derived-mode hnview-article-mode special-mode "hnview-article"
   "Major mode for reading extracted web articles."
+  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines nil)
   (setq-local shr-put-image-function #'hnview--article-put-image)
   (hnview--enable-translation-mode-line)

@@ -64,6 +64,8 @@
               #'hnview-top))
   (should (eq (lookup-key hnview-feed-mode-map (kbd "6"))
               #'hnview-active))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "q"))
+              #'quit-window))
   (should-not (lookup-key hnview-feed-mode-map (kbd "7"))))
 
 (ert-deftest hnview-feed-context-label-includes-section ()
@@ -87,7 +89,9 @@
   (should (eq (lookup-key hnview-thread-mode-map (kbd "u"))
               #'hnview-vote-up))
   (should (eq (lookup-key hnview-thread-mode-map (kbd "TAB"))
-              #'hnview-toggle-comment-fold)))
+              #'hnview-toggle-comment-fold))
+  (should (eq (lookup-key hnview-thread-mode-map (kbd "q"))
+              #'quit-window)))
 
 (ert-deftest hnview-inbox-mode-has-navigation-keys ()
   "Inbox buffers should expose navigation and refresh commands."
@@ -98,7 +102,9 @@
   (should (eq (lookup-key hnview-inbox-mode-map (kbd "r"))
               #'hnview-reply-at-point))
   (should (eq (lookup-key hnview-inbox-mode-map (kbd "u"))
-              #'hnview-vote-up)))
+              #'hnview-vote-up))
+  (should (eq (lookup-key hnview-inbox-mode-map (kbd "q"))
+              #'quit-window)))
 
 (ert-deftest hnview-profile-mode-has-section-and-item-keys ()
   "Profile buffers should expose section and item commands."
@@ -113,7 +119,9 @@
   (should (eq (lookup-key hnview-profile-mode-map (kbd "a"))
               #'hnview-open-article))
   (should (eq (lookup-key hnview-profile-mode-map (kbd "t"))
-              #'hnview-translate-at-point)))
+              #'hnview-translate-at-point))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "q"))
+              #'quit-window)))
 
 (ert-deftest hnview-article-mode-has-reader-keys ()
   "Article buffers should expose reader commands."
@@ -129,6 +137,37 @@
               #'hnview-article-translate-at-point))
   (should (eq (lookup-key hnview-article-mode-map (kbd "T"))
               #'hnview-article-translate-visible)))
+
+(ert-deftest hnview-evil-emacs-state-uses-native-keymap ()
+  "Evil users should get hnview's native read-only keymap by default."
+  (let ((hnview-use-emacs-state-in-evil t)
+        (major-mode 'hnview-feed-mode)
+        initial-state
+        called)
+    (cl-progv '(evil-local-mode) '(t)
+      (cl-letf (((symbol-function 'evil-set-initial-state)
+                 (lambda (mode state)
+                   (setq initial-state (cons mode state))))
+                ((symbol-function 'evil-emacs-state)
+                 (lambda () (setq called t))))
+        (hnview--maybe-enter-emacs-state-in-evil)))
+    (should (equal initial-state '(hnview-feed-mode . emacs)))
+    (should called)))
+
+(ert-deftest hnview-evil-emacs-state-can-be-disabled ()
+  "Users should be able to keep Evil state management unchanged."
+  (let ((hnview-use-emacs-state-in-evil nil)
+        (initial-state nil)
+        called)
+    (cl-progv '(evil-local-mode) '(t)
+      (cl-letf (((symbol-function 'evil-set-initial-state)
+                 (lambda (_mode _state)
+                   (setq initial-state t)))
+                ((symbol-function 'evil-emacs-state)
+                 (lambda () (setq called t))))
+        (hnview--maybe-enter-emacs-state-in-evil)))
+    (should-not initial-state)
+    (should-not called)))
 
 (ert-deftest hnview-profile-section-label-reads-simple-alist ()
   "Profile section labels should read simple section pairs."
@@ -214,6 +253,82 @@
     (should-not (string-match-p "Pricing" text))
     (should-not (string-match-p "newsletter" text))
     (should-not (string-match-p "reader comment" text))))
+
+(ert-deftest hnview-readability-prefers-article-body-container ()
+  "Readability extraction should prefer body containers over whole-page chrome."
+  (let* ((html "<html><head>
+<meta property='og:title' content='Poland is now among the world&#39;s 20 largest economies. How it happened'>
+<meta property='og:site_name' content='AP News'>
+</head><body>
+<header class='Page-header'>
+<a>World</a><a>Politics</a><a>Sports</a>
+<section>SECTIONS Iran war Russia-Ukraine war Español China Asia Pacific Latin America Europe Africa</section>
+<section>TOP STORIES UAE reports drone and missile attack after US says it traded fire with Iran</section>
+</header>
+<main class='Page-main'>
+<div class='Page-lead'><p>Poland's economy has been transformed dramatically since the fall of communism in 1989. Once struggling, it is now one of Europe's most successful.</p></div>
+<div class='Page-storyBody gtmMainScrollContent'>
+<div class='StoryPage-actions-byline'>By CLAUDIA CIOBANU and DAVID MCHUGH Share Facebook Copy Link</div>
+<div class='RichTextStoryBody RichTextBody'>
+<p>POZNAN, Poland (AP) — A generation ago, Poland rationed sugar and flour while its citizens were paid one-tenth what West Germans earned.</p>
+<p>It is a historic leap from the post-Communist ruins of 1989-90 to European growth champion, which economists say has lessons on how to bring prosperity to ordinary people.</p>
+</div>
+</div>
+</main>
+</body></html>")
+         (article (hnview--readability-extract
+                   html "https://apnews.com/article/example"))
+         (content (plist-get article :content-dom))
+         (text (hnview--readability-node-text content)))
+    (should (equal (hnview--readability-attribute-text content)
+                   "richtextstorybody richtextbody"))
+    (should (string-match-p "POZNAN, Poland" text))
+    (should (string-match-p "historic leap" text))
+    (should-not (string-match-p "TOP STORIES" text))
+    (should-not (string-match-p "transformed dramatically" text))
+    (should-not (string-match-p "Share Facebook" text))))
+
+(ert-deftest hnview-readability-prefers-json-ld-article-body ()
+  "JSON-LD article bodies should replace noisy duplicated page DOM."
+  (let* ((html "<html><head>
+<meta property='og:title' content='Canvas is online again'>
+<meta property='og:site_name' content='The Verge'>
+<script type='application/ld+json'>
+{
+  \"@context\": \"https://schema.org\",
+  \"@type\": \"NewsArticle\",
+  \"headline\": \"Canvas is online again\",
+  \"datePublished\": \"2026-05-07T21:29:27+00:00\",
+  \"author\": [{\"@type\": \"Person\", \"name\": \"Emma Roth\"},
+             {\"@type\": \"Person\", \"name\": \"Jess Weatherbed\"}],
+  \"image\": [{\"@type\": \"ImageObject\", \"url\": \"https://example.com/hero.jpg\"}],
+  \"articleBody\": \"The real article starts here.\\n> A quoted ransom message should be rendered as a quote.\\n[Media: https://www.reddit.com/r/example/comments/1]\\nThe article continues after the embedded media.\"
+}
+</script>
+</head><body>
+<main>
+<p>A massive outage of the learning platform started with a ransom message.</p>
+<p>A massive outage of the learning platform started with a ransom message.</p>
+<p>by Emma Roth and Jess Weatherbed</p>
+<ul><li></li><li></li><li></li></ul>
+<img src='https://example.com/hero.jpg'><img src='https://example.com/hero.jpg'>
+</main>
+</body></html>")
+         (article (hnview--readability-extract
+                   html "https://www.theverge.com/article"))
+         (content (plist-get article :content-dom))
+         (text (hnview--readability-node-text content)))
+    (should (equal (hnview--readability-attribute-text content)
+                   "hnview-json-ld-article"))
+    (should (equal (plist-get article :byline)
+                   "Emma Roth, Jess Weatherbed"))
+    (should (equal (length (dom-by-tag content 'img)) 1))
+    (should (dom-by-tag content 'blockquote))
+    (should (dom-by-tag content 'a))
+    (should (string-match-p "The real article starts here" text))
+    (should (string-match-p "quoted ransom message" text))
+    (should-not (string-match-p "A massive outage" text))
+    (should-not (string-match-p "by Emma Roth" text))))
 
 (ert-deftest hnview-readability-normalizes-lazy-images ()
   "Readability extraction should preserve lazy-loaded article images."
