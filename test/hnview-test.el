@@ -46,26 +46,28 @@
 
 (ert-deftest hnview-feed-mode-has-feed-switch-keys ()
   "Feed buffers should switch feeds through key bindings."
-  (should (eq (lookup-key hnview-feed-mode-map (kbd "f"))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "C-c C-v f"))
               #'hnview-switch-feed))
-  (should (eq (lookup-key hnview-feed-mode-map (kbd "s"))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "C-c C-v s"))
               #'hnview-switch-feed-section))
   (should (eq (lookup-key hnview-feed-mode-map (kbd "RET"))
               #'hnview-open-item))
-  (should (eq (lookup-key hnview-feed-mode-map (kbd "e"))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "C-c C-v e"))
               #'hnview-open-url-eww))
-  (should (eq (lookup-key hnview-feed-mode-map (kbd "a"))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "C-c C-v a"))
               #'hnview-open-article))
-  (should (eq (lookup-key hnview-feed-mode-map (kbd "r"))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "C-c C-v r"))
               #'hnview-reply-at-point))
-  (should (eq (lookup-key hnview-feed-mode-map (kbd "u"))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "C-c C-v u"))
               #'hnview-vote-up))
-  (should (eq (lookup-key hnview-feed-mode-map (kbd "1"))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "C-c C-v 1"))
               #'hnview-top))
-  (should (eq (lookup-key hnview-feed-mode-map (kbd "6"))
+  (should (eq (lookup-key hnview-feed-mode-map (kbd "C-c C-v 6"))
               #'hnview-active))
   (should (eq (lookup-key hnview-feed-mode-map (kbd "q"))
               #'quit-window))
+  (should-not (lookup-key hnview-feed-mode-map (kbd "f")))
+  (should-not (lookup-key hnview-feed-mode-map (kbd "a")))
   (should-not (lookup-key hnview-feed-mode-map (kbd "7"))))
 
 (ert-deftest hnview-feed-context-label-includes-section ()
@@ -78,65 +80,74 @@
 
 (ert-deftest hnview-thread-mode-has-comment-loading-keys ()
   "Thread buffers should expose comment loading commands."
-  (should (eq (lookup-key hnview-thread-mode-map (kbd "+"))
+  (should (eq (lookup-key hnview-thread-mode-map (kbd "C-c C-v +"))
               #'hnview-load-more-comments))
-  (should (eq (lookup-key hnview-thread-mode-map (kbd "*"))
+  (should (eq (lookup-key hnview-thread-mode-map (kbd "C-c C-v *"))
               #'hnview-load-all-comments))
-  (should (eq (lookup-key hnview-thread-mode-map (kbd "r"))
+  (should (eq (lookup-key hnview-thread-mode-map (kbd "C-c C-v r"))
               #'hnview-reply-at-point))
-  (should (eq (lookup-key hnview-thread-mode-map (kbd "a"))
+  (should (eq (lookup-key hnview-thread-mode-map (kbd "C-c C-v a"))
               #'hnview-open-article))
-  (should (eq (lookup-key hnview-thread-mode-map (kbd "u"))
+  (should (eq (lookup-key hnview-thread-mode-map (kbd "C-c C-v u"))
               #'hnview-vote-up))
   (should (eq (lookup-key hnview-thread-mode-map (kbd "TAB"))
               #'hnview-toggle-comment-fold))
   (should (eq (lookup-key hnview-thread-mode-map (kbd "q"))
-              #'quit-window)))
+              #'quit-window))
+  (should-not (lookup-key hnview-thread-mode-map (kbd "+")))
+  (should-not (lookup-key hnview-thread-mode-map (kbd "a"))))
 
 (ert-deftest hnview-inbox-mode-has-navigation-keys ()
   "Inbox buffers should expose navigation and refresh commands."
-  (should (eq (lookup-key hnview-inbox-mode-map (kbd "g"))
+  (should (eq (lookup-key hnview-inbox-mode-map (kbd "C-c C-v g"))
               #'hnview-inbox))
   (should (eq (lookup-key hnview-inbox-mode-map (kbd "RET"))
               #'hnview-open-url))
-  (should (eq (lookup-key hnview-inbox-mode-map (kbd "r"))
+  (should (eq (lookup-key hnview-inbox-mode-map (kbd "C-c C-v r"))
               #'hnview-reply-at-point))
-  (should (eq (lookup-key hnview-inbox-mode-map (kbd "u"))
+  (should (eq (lookup-key hnview-inbox-mode-map (kbd "C-c C-v u"))
               #'hnview-vote-up))
   (should (eq (lookup-key hnview-inbox-mode-map (kbd "q"))
-              #'quit-window)))
+              #'quit-window))
+  (should-not (lookup-key hnview-inbox-mode-map (kbd "g")))
+  (should-not (lookup-key hnview-inbox-mode-map (kbd "r"))))
 
 (ert-deftest hnview-profile-mode-has-section-and-item-keys ()
   "Profile buffers should expose section and item commands."
-  (should (eq (lookup-key hnview-profile-mode-map (kbd "f"))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "C-c C-v f"))
               #'hnview-profile-switch-section))
-  (should (eq (lookup-key hnview-profile-mode-map (kbd "1"))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "C-c C-v 1"))
               #'hnview-profile-about))
-  (should (eq (lookup-key hnview-profile-mode-map (kbd "6"))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "C-c C-v 6"))
               #'hnview-profile-hidden))
   (should (eq (lookup-key hnview-profile-mode-map (kbd "RET"))
               #'hnview-open-item))
-  (should (eq (lookup-key hnview-profile-mode-map (kbd "a"))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "C-c C-v a"))
               #'hnview-open-article))
-  (should (eq (lookup-key hnview-profile-mode-map (kbd "t"))
+  (should (eq (lookup-key hnview-profile-mode-map (kbd "C-c C-v t"))
               #'hnview-translate-at-point))
   (should (eq (lookup-key hnview-profile-mode-map (kbd "q"))
-              #'quit-window)))
+              #'quit-window))
+  (should-not (lookup-key hnview-profile-mode-map (kbd "f")))
+  (should-not (lookup-key hnview-profile-mode-map (kbd "t"))))
 
 (ert-deftest hnview-article-mode-has-reader-keys ()
   "Article buffers should expose reader commands."
-  (should (eq (lookup-key hnview-article-mode-map (kbd "g"))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "C-c C-v g"))
               #'hnview-article-refresh))
-  (should (eq (lookup-key hnview-article-mode-map (kbd "o"))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "C-c C-v o"))
               #'hnview-article-open-url))
-  (should (eq (lookup-key hnview-article-mode-map (kbd "e"))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "C-c C-v e"))
               #'hnview-article-open-eww))
-  (should (eq (lookup-key hnview-article-mode-map (kbd "i"))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "C-c C-v i"))
               #'hnview-article-toggle-images))
-  (should (eq (lookup-key hnview-article-mode-map (kbd "t"))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "C-c C-v t"))
               #'hnview-article-translate-at-point))
-  (should (eq (lookup-key hnview-article-mode-map (kbd "T"))
-              #'hnview-article-translate-visible)))
+  (should (eq (lookup-key hnview-article-mode-map (kbd "C-c C-v T"))
+              #'hnview-article-translate-visible))
+  (should-not (eq (lookup-key hnview-article-mode-map (kbd "g"))
+                  #'hnview-article-refresh))
+  (should-not (lookup-key hnview-article-mode-map (kbd "t"))))
 
 (ert-deftest hnview-evil-emacs-state-uses-native-keymap ()
   "Evil users should get hnview's native read-only keymap by default."
@@ -288,6 +299,49 @@
     (should-not (string-match-p "transformed dramatically" text))
     (should-not (string-match-p "Share Facebook" text))))
 
+(ert-deftest hnview-readability-focuses-descendant-content ()
+  "Readability extraction should narrow wrappers to focused article text."
+  (let* ((body
+          (concat
+           "A week ago the Copy Fail vulnerability came out, and the "
+           "discussion quickly moved from a normal security fix to a broader "
+           "question about how vulnerability disclosure changes with AI."))
+         (html (format "<html><head>
+<title>AI is Breaking Two Vulnerability Cultures</title>
+</head><body>
+<div id='wrapper'>
+<div class='headfoot'><ul>
+<li><a href='/'>Jeff Kaufman</a></li>
+<li><a href='/p/index'>Posts</a></li>
+<li><a href='/news.rss'>RSS</a></li>
+<li><a href='/contact'>Contact</a></li>
+</ul></div>
+<div class='content'>
+<table><tr><td><h3>AI is Breaking Two Vulnerability Cultures</h3></td></tr></table>
+<div class='pt'>
+<p>%s</p>
+<p>It's interesting to see the tension here between two different approaches
+to vulnerabilities, and to think about how this changes as AI gets better at
+finding security bugs.</p>
+</div>
+</div>
+<section class='webring'><p>Recent posts on blogs I like.</p></section>
+<div id='right-column'><p>More Posts</p></div>
+</div></body></html>"
+                       body))
+         (article (hnview--readability-extract
+                   html "https://www.jefftk.com/p/example"))
+         (content (plist-get article :content-dom))
+         (text (hnview--readability-node-text content)))
+    (should (member (hnview--readability-attribute-text content)
+                    '("content" "pt")))
+    (should (string-match-p "Copy Fail vulnerability" text))
+    (should (string-match-p "tension here" text))
+    (should-not (string-match-p "Jeff Kaufman" text))
+    (should-not (string-match-p "Posts RSS" text))
+    (should-not (string-match-p "Recent posts" text))
+    (should-not (string-match-p "More Posts" text))))
+
 (ert-deftest hnview-readability-prefers-json-ld-article-body ()
   "JSON-LD article bodies should replace noisy duplicated page DOM."
   (let* ((html "<html><head>
@@ -345,6 +399,197 @@
     (should (equal (dom-attr image 'src)
                    "https://example.com/image.jpg"))))
 
+(ert-deftest hnview-readability-removes-toc-and-decorative-images ()
+  "Readability extraction should remove TOC chrome and decorative images."
+  (let* ((html "<html><head><title>Long Paper</title></head><body>
+<div id='toc'><h2>Chapters</h2><a href='#intro'>Introduction</a></div>
+<main class='article-content'>
+<h1>Long Paper</h1>
+<p>This long-form paper paragraph is substantial enough to be treated as readable article content instead of page navigation.</p>
+<img alt='Access Point Icon' src='images/accesspointicon.gif'>
+<p>This second paragraph keeps the article candidate strong and should remain visible in the extracted reader body.</p>
+<img alt='Throughput chart' src='images/chart.jpg'>
+</main>
+</body></html>")
+         (article (hnview--readability-extract
+                   html "https://example.com/paper"))
+         (content (plist-get article :content-dom))
+         (text (hnview--readability-node-text content))
+         (images (dom-by-tag content 'img)))
+    (should (string-match-p "long-form paper paragraph" text))
+    (should-not (string-match-p "Chapters" text))
+    (should (= (length images) 1))
+    (should (equal (dom-attr (car images) 'src)
+                   "images/chart.jpg"))))
+
+(ert-deftest hnview-readability-removes-finance-article-modules ()
+  "Readability extraction should remove market widgets and promos."
+  (let* ((html "<html><head>
+<meta property='og:title' content='AWS data center outage'>
+<meta property='og:site_name' content='CNBC'>
+</head><body>
+<div class='ArticleBody-articleBody'>
+<div class='RegularArticle-relatedQuotes RelatedQuotes-relatedQuotes'>
+<h2>In this article</h2><a>COIN</a><a>AMZN</a><a>FLUT</a>
+</div>
+<div class='InlineImage-imageEmbed'>
+<div class='lazyload-placeholder'></div>
+<div class='InlineImage-imageEmbedCredit'>Mateusz Slodkowski | Getty Images</div>
+</div>
+<div class='group'>
+<p>Amazon Web Services started reporting operational issues that affected trading on several platforms.</p>
+</div>
+<div class='group'>
+<div class='RelatedContent-relatedContent'><ul><li><a>Related market story</a></li></ul></div>
+</div>
+<div role='region'><div class='InlineVideo-videoEmbed'>watch now VIDEO</div></div>
+<div class='ArticleBody-googlePreferredSourceContainer'>Choose CNBC as your preferred source on Google.</div>
+<div class='group'>
+<p>The AWS health dashboard later said that engineers were still working to recover impaired compute instances.</p>
+</div>
+</div>
+</body></html>")
+         (article (hnview--readability-extract
+                   html "https://www.cnbc.com/article"))
+         (text (hnview--readability-node-text
+                (plist-get article :content-dom))))
+    (should (string-match-p "Amazon Web Services" text))
+    (should (string-match-p "AWS health dashboard" text))
+    (should-not (string-match-p "In this article" text))
+    (should-not (string-match-p "COIN" text))
+    (should-not (string-match-p "Getty Images" text))
+    (should-not (string-match-p "Related market story" text))
+    (should-not (string-match-p "watch now" text))
+    (should-not (string-match-p "preferred source" text))))
+
+(ert-deftest hnview-readability-extracts-markdown-source ()
+  "Markdown-backed pages should render the fetched Markdown source."
+  (let* ((html "<html><head>
+<title>Markdown Article</title>
+<script>window.POST_META = { mdFile: 'posts/article.md' };</script>
+</head><body><div id='root'></div></body></html>")
+         (markdown "## Markdown Article
+
+This paragraph comes from the Markdown source with `inline_code` and **strong text**.
+
+- `freelist[]`: a stack of available slot indices, allocated as
+  `kcalloc(num_niovs, sizeof(u32))`
+
+---
+
+| Requirement | Detail |
+|-------------|--------|
+| Kernel | 6.15 |
+
+![Diagram](images/diagram.png)
+
+> A quoted note should remain a quote.")
+         (markdown-url
+          (hnview--readability-markdown-source-url
+           html "https://example.com/post.html"))
+         (article (hnview--readability-extract-markdown
+                   html "https://example.com/post.html" markdown-url markdown))
+         (content (plist-get article :content-dom))
+         (text (hnview--readability-node-text content)))
+    (should (equal markdown-url "https://example.com/posts/article.md"))
+    (should (string-match-p "Markdown source" text))
+    (should (dom-by-tag content 'h2))
+    (should (dom-by-tag content 'code))
+    (should (dom-by-tag content 'strong))
+    (should (dom-by-tag content 'hr))
+    (should (dom-by-tag content 'table))
+    (should (string-match-p "kcalloc(num_niovs" text))
+    (should-not (string-match-p "## Markdown Article" text))
+    (should-not (string-match-p "`inline_code`" text))
+    (should-not (string-match-p "\\*\\*strong text\\*\\*" text))
+    (should (dom-by-tag content 'blockquote))
+    (should (equal (dom-attr (car (dom-by-tag content 'img)) 'src)
+                   "https://example.com/posts/images/diagram.png"))))
+
+(ert-deftest hnview-markdown-source-renders-without-raw-markers ()
+  "Markdown-backed article rendering should not expose common Markdown marks."
+  (let* ((markdown "## The subsystem
+
+ZCRX uses `free_count` and **Path A**.
+
+| Name | Value |
+|------|-------|
+| N | 32 |
+
+```c
+area->freelist[area->free_count++] = 7;
+```")
+         (article (list :url "https://example.com/posts/article.md"
+                        :content-dom
+                        (hnview--markdown-content-dom
+                         markdown "https://example.com/posts/article.md"))))
+    (with-temp-buffer
+      (hnview-article-mode)
+      (let ((inhibit-read-only t))
+        (hnview--insert-article-content article))
+      (let ((rendered (buffer-string)))
+        (should (string-match-p "The subsystem" rendered))
+        (should (string-match-p "free_count" rendered))
+        (should (string-match-p "Path A" rendered))
+        (should-not (string-match-p "## The subsystem" rendered))
+        (should-not (string-match-p "`free_count`" rendered))
+        (should-not (string-match-p "\\*\\*Path A\\*\\*" rendered))
+        (should-not (string-match-p "```" rendered))))))
+
+(ert-deftest hnview-article-code-mode-prefers-tree-sitter ()
+  "Article code highlighting should prefer tree-sitter when available."
+  (cl-letf (((symbol-function 'hnview--article-treesit-ready-p)
+             (lambda (language)
+               (eq language 'c))))
+    (should (eq (hnview--article-code-mode "c") #'c-ts-mode)))
+  (cl-letf (((symbol-function 'hnview--article-treesit-ready-p)
+             (lambda (_language) nil)))
+    (should (eq (hnview--article-code-mode "c") #'c-mode))))
+
+(ert-deftest hnview-article-code-blocks-are-highlighted ()
+  "Article code blocks should receive font-lock faces."
+  (let* ((markdown "```elisp
+(defun hnview-test-code ()
+  (message \"ok\"))
+```")
+         (article (list :url "https://example.com/posts/article.md"
+                        :content-dom
+                        (hnview--markdown-content-dom
+                         markdown "https://example.com/posts/article.md")))
+         (hnview-article-highlight-code t))
+    (with-temp-buffer
+      (hnview-article-mode)
+      (let ((inhibit-read-only t))
+        (hnview--insert-article-content article))
+      (goto-char (point-min))
+      (should (search-forward "defun" nil t))
+      (should (get-text-property (match-beginning 0) 'face)))))
+
+(ert-deftest hnview-article-c-code-highlights-function-calls ()
+  "Tree-sitter C highlighting should include function calls at high detail."
+  (skip-unless (and (fboundp 'c-ts-mode)
+                    (hnview--article-treesit-ready-p 'c)))
+  (let* ((markdown "```c
+ioctl(sock, SIOCGIFFLAGS, &ifr);
+ifr.ifr_flags &= ~IFF_UP;
+ioctl(sock, SIOCSIFFLAGS, &ifr);   /* -> page_pool_destroy */
+```")
+         (article (list :url "https://example.com/posts/article.md"
+                        :content-dom
+                        (hnview--markdown-content-dom
+                         markdown "https://example.com/posts/article.md")))
+         (hnview-article-highlight-code t))
+    (with-temp-buffer
+      (hnview-article-mode)
+      (let ((inhibit-read-only t))
+        (hnview--insert-article-content article))
+      (goto-char (point-min))
+      (should (search-forward "ioctl" nil t))
+      (should (eq (get-text-property (match-beginning 0) 'face)
+                  'font-lock-function-call-face))
+      (should (search-forward "IFF_UP" nil t))
+      (should (get-text-property (match-beginning 0) 'face)))))
+
 (ert-deftest hnview-article-rendering-keeps-paragraphs-logical ()
   "Article rendering should let Emacs wrap paragraph lines visually."
   (let* ((paragraph
@@ -362,14 +607,45 @@
       (goto-char (point-min))
       (should (search-forward paragraph nil t)))))
 
-(ert-deftest hnview-article-image-width-follows-window ()
-  "Article image width should follow the current window, not article width."
-  (let ((hnview-article-width 24)
-        (char-width (frame-char-width)))
+(ert-deftest hnview-article-image-width-shrinks-oversized-images ()
+  "Article images wider than the window should shrink to the window ratio."
+  (let ((hnview-article-image-max-window-ratio 0.8)
+        (hnview-article-image-min-original-ratio 0.5))
+    (cl-letf (((symbol-function 'hnview--article-window-width-pixels)
+               (lambda () 900)))
+      (should (= (hnview--article-image-max-width-pixels 1000)
+                 720)))))
+
+(ert-deftest hnview-article-image-width-keeps-original-floor ()
+  "Article image width should avoid shrinking oversized images below half size."
+  (let ((hnview-article-image-max-window-ratio 0.8)
+        (hnview-article-image-min-original-ratio 0.5))
+    (cl-letf (((symbol-function 'hnview--article-window-width-pixels)
+               (lambda () 900)))
+      (should (= (hnview--article-image-max-width-pixels 2000)
+                 1000)))))
+
+(ert-deftest hnview-article-image-width-keeps-window-fitting-images ()
+  "Article images no wider than the window should keep their original width."
+  (let ((hnview-article-image-max-window-ratio 0.8)
+        (hnview-article-image-min-original-ratio 0.5))
+    (cl-letf (((symbol-function 'hnview--article-window-width-pixels)
+               (lambda () 900)))
+      (should (= (hnview--article-image-max-width-pixels 800)
+                 800))
+      (should (= (hnview--article-image-max-width-pixels 900)
+                 900))
+      (should (= (hnview--article-image-max-width-pixels 400)
+                 400)))))
+
+(ert-deftest hnview-article-image-width-uses-window-when-width-unknown ()
+  "Article images with unknown width should fall back to the window width."
+  (let ((hnview-article-image-max-window-ratio 0.8)
+        (hnview-article-image-min-original-ratio 0.5))
     (cl-letf (((symbol-function 'hnview--article-window-width-pixels)
                (lambda () 900)))
       (should (= (hnview--article-image-max-width-pixels)
-                 (max 80 (- 900 (* 2 char-width))))))))
+                 900)))))
 
 (ert-deftest hnview-article-rendering-shows-cached-translation ()
   "Article rendering should replace visible cached body translations."

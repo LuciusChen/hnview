@@ -39,8 +39,10 @@
 (declare-function eww "eww")
 (declare-function evil-emacs-state "evil")
 (declare-function evil-set-initial-state "evil")
+(declare-function treesit-ready-p "treesit" (language &optional quiet))
 (defvar plz-curl-default-args)
 (defvar evil-local-mode)
+(defvar treesit-font-lock-level)
 
 (defgroup hnview nil
   "Modern Hacker News reader with translation."
@@ -228,6 +230,22 @@ Article paragraphs are rendered as logical lines and wrapped by Emacs."
   :type 'natnum
   :group 'hnview)
 
+(defcustom hnview-article-image-max-window-ratio 0.8
+  "Maximum oversized article image width as a ratio of current window width."
+  :type 'number
+  :group 'hnview)
+
+(defcustom hnview-article-image-min-original-ratio 0.5
+  "Minimum article image width as a ratio of its original width.
+This only applies when the source image width is known."
+  :type 'number
+  :group 'hnview)
+
+(defcustom hnview-article-highlight-code t
+  "Whether article reader code blocks should use syntax highlighting."
+  :type 'boolean
+  :group 'hnview)
+
 (defcustom hnview-article-min-text-length 120
   "Minimum text length preferred for readability candidates."
   :type 'natnum
@@ -370,24 +388,24 @@ q, available in read-only buffers."
 
 (defvar hnview-feed-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "g") #'hnview-refresh)
-    (define-key map (kbd "f") #'hnview-switch-feed)
-    (define-key map (kbd "s") #'hnview-switch-feed-section)
-    (define-key map (kbd "1") #'hnview-top)
-    (define-key map (kbd "2") #'hnview-ask)
-    (define-key map (kbd "3") #'hnview-show)
-    (define-key map (kbd "4") #'hnview-best)
-    (define-key map (kbd "5") #'hnview-new)
-    (define-key map (kbd "6") #'hnview-active)
+    (define-key map (kbd "C-c C-v g") #'hnview-refresh)
+    (define-key map (kbd "C-c C-v f") #'hnview-switch-feed)
+    (define-key map (kbd "C-c C-v s") #'hnview-switch-feed-section)
+    (define-key map (kbd "C-c C-v 1") #'hnview-top)
+    (define-key map (kbd "C-c C-v 2") #'hnview-ask)
+    (define-key map (kbd "C-c C-v 3") #'hnview-show)
+    (define-key map (kbd "C-c C-v 4") #'hnview-best)
+    (define-key map (kbd "C-c C-v 5") #'hnview-new)
+    (define-key map (kbd "C-c C-v 6") #'hnview-active)
     (define-key map (kbd "RET") #'hnview-open-item)
-    (define-key map (kbd "o") #'hnview-open-url)
-    (define-key map (kbd "e") #'hnview-open-url-eww)
-    (define-key map (kbd "a") #'hnview-open-article)
-    (define-key map (kbd "b") #'hnview-toggle-bookmark)
-    (define-key map (kbd "r") #'hnview-reply-at-point)
-    (define-key map (kbd "u") #'hnview-vote-up)
-    (define-key map (kbd "t") #'hnview-translate-at-point)
-    (define-key map (kbd "T") #'hnview-translate-visible)
+    (define-key map (kbd "C-c C-v o") #'hnview-open-url)
+    (define-key map (kbd "C-c C-v e") #'hnview-open-url-eww)
+    (define-key map (kbd "C-c C-v a") #'hnview-open-article)
+    (define-key map (kbd "C-c C-v b") #'hnview-toggle-bookmark)
+    (define-key map (kbd "C-c C-v r") #'hnview-reply-at-point)
+    (define-key map (kbd "C-c C-v u") #'hnview-vote-up)
+    (define-key map (kbd "C-c C-v t") #'hnview-translate-at-point)
+    (define-key map (kbd "C-c C-v T") #'hnview-translate-visible)
     (define-key map (kbd "n") #'hnview-next-item)
     (define-key map (kbd "p") #'hnview-previous-item)
     (define-key map (kbd "q") #'quit-window)
@@ -396,19 +414,19 @@ q, available in read-only buffers."
 
 (defvar hnview-thread-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "g") #'hnview-refresh)
-    (define-key map (kbd "+") #'hnview-load-more-comments)
-    (define-key map (kbd "*") #'hnview-load-all-comments)
+    (define-key map (kbd "C-c C-v g") #'hnview-refresh)
+    (define-key map (kbd "C-c C-v +") #'hnview-load-more-comments)
+    (define-key map (kbd "C-c C-v *") #'hnview-load-all-comments)
     (define-key map (kbd "TAB") #'hnview-toggle-comment-fold)
     (define-key map (kbd "RET") #'hnview-open-url)
-    (define-key map (kbd "o") #'hnview-open-url)
-    (define-key map (kbd "e") #'hnview-open-url-eww)
-    (define-key map (kbd "a") #'hnview-open-article)
-    (define-key map (kbd "b") #'hnview-toggle-bookmark)
-    (define-key map (kbd "r") #'hnview-reply-at-point)
-    (define-key map (kbd "u") #'hnview-vote-up)
-    (define-key map (kbd "t") #'hnview-translate-at-point)
-    (define-key map (kbd "T") #'hnview-translate-visible)
+    (define-key map (kbd "C-c C-v o") #'hnview-open-url)
+    (define-key map (kbd "C-c C-v e") #'hnview-open-url-eww)
+    (define-key map (kbd "C-c C-v a") #'hnview-open-article)
+    (define-key map (kbd "C-c C-v b") #'hnview-toggle-bookmark)
+    (define-key map (kbd "C-c C-v r") #'hnview-reply-at-point)
+    (define-key map (kbd "C-c C-v u") #'hnview-vote-up)
+    (define-key map (kbd "C-c C-v t") #'hnview-translate-at-point)
+    (define-key map (kbd "C-c C-v T") #'hnview-translate-visible)
     (define-key map (kbd "n") #'hnview-next-item)
     (define-key map (kbd "p") #'hnview-previous-item)
     (define-key map (kbd "q") #'quit-window)
@@ -417,15 +435,15 @@ q, available in read-only buffers."
 
 (defvar hnview-inbox-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "g") #'hnview-inbox)
+    (define-key map (kbd "C-c C-v g") #'hnview-inbox)
     (define-key map (kbd "RET") #'hnview-open-url)
-    (define-key map (kbd "o") #'hnview-open-url)
-    (define-key map (kbd "e") #'hnview-open-url-eww)
-    (define-key map (kbd "a") #'hnview-open-article)
-    (define-key map (kbd "r") #'hnview-reply-at-point)
-    (define-key map (kbd "u") #'hnview-vote-up)
-    (define-key map (kbd "t") #'hnview-translate-at-point)
-    (define-key map (kbd "T") #'hnview-translate-visible)
+    (define-key map (kbd "C-c C-v o") #'hnview-open-url)
+    (define-key map (kbd "C-c C-v e") #'hnview-open-url-eww)
+    (define-key map (kbd "C-c C-v a") #'hnview-open-article)
+    (define-key map (kbd "C-c C-v r") #'hnview-reply-at-point)
+    (define-key map (kbd "C-c C-v u") #'hnview-vote-up)
+    (define-key map (kbd "C-c C-v t") #'hnview-translate-at-point)
+    (define-key map (kbd "C-c C-v T") #'hnview-translate-visible)
     (define-key map (kbd "n") #'hnview-next-item)
     (define-key map (kbd "p") #'hnview-previous-item)
     (define-key map (kbd "q") #'quit-window)
@@ -434,23 +452,23 @@ q, available in read-only buffers."
 
 (defvar hnview-profile-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "g") #'hnview-refresh)
-    (define-key map (kbd "f") #'hnview-profile-switch-section)
-    (define-key map (kbd "1") #'hnview-profile-about)
-    (define-key map (kbd "2") #'hnview-profile-stories)
-    (define-key map (kbd "3") #'hnview-profile-comments)
-    (define-key map (kbd "4") #'hnview-profile-favorites)
-    (define-key map (kbd "5") #'hnview-profile-upvoted)
-    (define-key map (kbd "6") #'hnview-profile-hidden)
+    (define-key map (kbd "C-c C-v g") #'hnview-refresh)
+    (define-key map (kbd "C-c C-v f") #'hnview-profile-switch-section)
+    (define-key map (kbd "C-c C-v 1") #'hnview-profile-about)
+    (define-key map (kbd "C-c C-v 2") #'hnview-profile-stories)
+    (define-key map (kbd "C-c C-v 3") #'hnview-profile-comments)
+    (define-key map (kbd "C-c C-v 4") #'hnview-profile-favorites)
+    (define-key map (kbd "C-c C-v 5") #'hnview-profile-upvoted)
+    (define-key map (kbd "C-c C-v 6") #'hnview-profile-hidden)
     (define-key map (kbd "RET") #'hnview-open-item)
-    (define-key map (kbd "o") #'hnview-open-url)
-    (define-key map (kbd "e") #'hnview-open-url-eww)
-    (define-key map (kbd "a") #'hnview-open-article)
-    (define-key map (kbd "b") #'hnview-toggle-bookmark)
-    (define-key map (kbd "r") #'hnview-reply-at-point)
-    (define-key map (kbd "u") #'hnview-vote-up)
-    (define-key map (kbd "t") #'hnview-translate-at-point)
-    (define-key map (kbd "T") #'hnview-translate-visible)
+    (define-key map (kbd "C-c C-v o") #'hnview-open-url)
+    (define-key map (kbd "C-c C-v e") #'hnview-open-url-eww)
+    (define-key map (kbd "C-c C-v a") #'hnview-open-article)
+    (define-key map (kbd "C-c C-v b") #'hnview-toggle-bookmark)
+    (define-key map (kbd "C-c C-v r") #'hnview-reply-at-point)
+    (define-key map (kbd "C-c C-v u") #'hnview-vote-up)
+    (define-key map (kbd "C-c C-v t") #'hnview-translate-at-point)
+    (define-key map (kbd "C-c C-v T") #'hnview-translate-visible)
     (define-key map (kbd "n") #'hnview-next-item)
     (define-key map (kbd "p") #'hnview-previous-item)
     (define-key map (kbd "q") #'quit-window)
@@ -469,18 +487,16 @@ q, available in read-only buffers."
 (defvar hnview-article-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
-    (define-key map (kbd "g") #'hnview-article-refresh)
+    (define-key map (kbd "C-c C-v g") #'hnview-article-refresh)
     (define-key map (kbd "q") #'quit-window)
-    (define-key map (kbd "o") #'hnview-article-open-url)
-    (define-key map (kbd "e") #'hnview-article-open-eww)
-    (define-key map (kbd "i") #'hnview-article-toggle-images)
-    (define-key map (kbd "t") #'hnview-article-translate-at-point)
-    (define-key map (kbd "T") #'hnview-article-translate-visible)
+    (define-key map (kbd "C-c C-v o") #'hnview-article-open-url)
+    (define-key map (kbd "C-c C-v e") #'hnview-article-open-eww)
+    (define-key map (kbd "C-c C-v i") #'hnview-article-toggle-images)
+    (define-key map (kbd "C-c C-v t") #'hnview-article-translate-at-point)
+    (define-key map (kbd "C-c C-v T") #'hnview-article-translate-visible)
     (define-key map (kbd "RET") #'shr-browse-url)
     (define-key map (kbd "TAB") #'shr-next-link)
     (define-key map (kbd "<backtab>") #'shr-previous-link)
-    (define-key map (kbd "c") #'shr-copy-url)
-    (define-key map (kbd "I") #'shr-browse-image)
     map)
   "Keymap for `hnview-article-mode'.")
 
@@ -1797,6 +1813,10 @@ REMAINING is a mutable one-item list containing the fetch budget."
   "\\(?:\\`\\|[-_[:space:]]\\)\\(?:ad\\|ads\\|advert\\|banner\\|breadcrumb\\|comment\\|comments\\|cookie\\|footer\\|header\\|menu\\|modal\\|nav\\|newsletter\\|popup\\|promo\\|related\\|share\\|sidebar\\|social\\|sponsor\\|subscribe\\)\\(?:\\'\\|[-_[:space:]]\\)"
   "Regular expression matching likely page chrome attributes.")
 
+(defconst hnview--readability-hard-negative-regexp
+  "\\(?:related[-_]?content\\|related[-_]?quotes\\|google[-_]?preferred[-_]?source\\|mobile[-_]?adhesion\\|inline[-_]?video\\|video[-_]?placeholder\\)"
+  "Regular expression matching embedded modules that should always be removed.")
+
 (defconst hnview--readability-lazy-image-attributes
   '(data-src data-original data-lazy-src data-full-src data-actualsrc
              data-url data-image)
@@ -1849,6 +1869,306 @@ REMAINING is a mutable one-item list containing the fetch budget."
             :description description
             :text-length (length text)
             :content-dom content))))
+
+(defun hnview--readability-extract-markdown (html url markdown-url markdown)
+  "Extract article metadata from HTML URL and body content from MARKDOWN-URL.
+MARKDOWN is the fetched Markdown source text."
+  (let* ((article (hnview--readability-extract html url))
+         (content (hnview--markdown-content-dom markdown markdown-url))
+         (text (hnview--readability-node-text content)))
+    (plist-put article :content-dom content)
+    (plist-put article :text-length (length text))
+    article))
+
+(defun hnview--readability-needs-markdown-source-p (article)
+  "Return non-nil when ARTICLE probably needs an external Markdown source."
+  (< (or (plist-get article :text-length) 0)
+     hnview-article-min-text-length))
+
+(defun hnview--readability-markdown-source-url (html url)
+  "Return an external Markdown source URL declared in HTML, if any."
+  (when (string-match
+         "\\_<mdFile\\_>\\s-*:\\s-*['\"]\\([^'\"]+\\.md\\(?:[?#][^'\"]*\\)?\\)['\"]"
+         html)
+    (hnview--resolve-url url (match-string 1 html))))
+
+(defun hnview--resolve-url (base-url maybe-relative-url)
+  "Resolve MAYBE-RELATIVE-URL against BASE-URL."
+  (cond
+   ((string-match-p "\\`https?://" maybe-relative-url)
+    maybe-relative-url)
+   ((string-prefix-p "//" maybe-relative-url)
+    (concat (or (hnview--url-scheme base-url) "https") ":"
+            maybe-relative-url))
+   ((string-prefix-p "/" maybe-relative-url)
+    (concat (hnview--url-origin base-url) maybe-relative-url))
+   (t
+    (concat (hnview--url-origin base-url)
+            (hnview--url-directory-path base-url)
+            maybe-relative-url))))
+
+(defun hnview--url-origin (url)
+  "Return URL origin."
+  (let* ((parsed (url-generic-parse-url url))
+         (scheme (or (url-type parsed) "https"))
+         (host (or (url-host parsed) ""))
+         (port (url-port parsed))
+         (default-port-p (or (and (equal scheme "https") (equal port 443))
+                             (and (equal scheme "http") (equal port 80)))))
+    (format "%s://%s%s"
+            scheme host
+            (if (and port (not default-port-p))
+                (format ":%s" port)
+              ""))))
+
+(defun hnview--url-directory-path (url)
+  "Return URL directory path ending with a slash."
+  (let* ((path (hnview--url-path url))
+         (directory (file-name-directory path)))
+    (or directory "/")))
+
+(defun hnview--markdown-content-dom (markdown base-url)
+  "Return a DOM node for MARKDOWN resolved relative to BASE-URL."
+  (let ((lines (split-string (or markdown "") "\n"))
+        nodes paragraph list-items list-kind quote-lines table-lines)
+    (cl-labels
+        ((push-node (node)
+           (push node nodes))
+         (flush-paragraph ()
+           (when paragraph
+             (push-node
+              (apply #'dom-node 'p nil
+                     (hnview--markdown-inline-nodes
+                      (string-join (nreverse paragraph) " ")
+                      base-url)))
+             (setq paragraph nil)))
+         (flush-list ()
+           (when list-items
+             (push-node
+              (apply #'dom-node (if (eq list-kind 'ol) 'ol 'ul) nil
+                     (mapcar
+                      (lambda (text)
+                        (apply #'dom-node 'li nil
+                               (hnview--markdown-inline-nodes text base-url)))
+                      (nreverse list-items))))
+             (setq list-items nil
+                   list-kind nil)))
+         (flush-quote ()
+           (when quote-lines
+             (push-node
+              (dom-node
+               'blockquote nil
+               (apply #'dom-node 'p nil
+                      (hnview--markdown-inline-nodes
+                       (string-join (nreverse quote-lines) " ")
+                       base-url))))
+             (setq quote-lines nil)))
+         (flush-table ()
+           (when table-lines
+             (let ((lines (nreverse table-lines)))
+               (push-node
+                (or (hnview--markdown-table-dom lines base-url)
+                    (dom-node 'pre nil (string-join lines "\n")))))
+             (setq table-lines nil)))
+         (flush-blocks ()
+           (flush-paragraph)
+           (flush-list)
+           (flush-quote)
+           (flush-table)))
+      (while lines
+        (let ((line (pop lines)))
+          (cond
+           ((string-match-p "\\`[ \t]*\\'" line)
+            (flush-blocks))
+           ((string-match "\\`[ \t]*```[ \t]*\\([^` \t\n\r]*\\)" line)
+            (flush-blocks)
+            (let ((language (hnview--markdown-code-fence-language
+                             (match-string 1 line)))
+                  code-lines)
+              (while (and lines
+                          (not (string-match-p "\\`[ \t]*```"
+                                               (car lines))))
+                (push (pop lines) code-lines))
+              (when lines
+                (pop lines))
+              (push-node
+               (dom-node
+                'pre (when language
+                       `((data-hnview-code-language . ,language)))
+                (dom-node
+                 'code (when language
+                         `((class . ,(concat "language-" language))))
+                 (string-join (nreverse code-lines) "\n"))))))
+           ((hnview--markdown-horizontal-rule-p line)
+            (flush-blocks)
+            (push-node (dom-node 'hr nil)))
+           ((and (string-match "\\`\\(#+\\)[ \t]+\\(.+\\)\\'" line)
+                 (<= (length (match-string 1 line)) 6))
+            (flush-blocks)
+            (let ((tag (intern (format "h%d"
+                                       (length (match-string 1 line))))))
+              (push-node
+               (apply #'dom-node tag nil
+                      (hnview--markdown-inline-nodes
+                       (match-string 2 line) base-url)))))
+           ((string-match "\\`[ \t]*>[ \t]?\\(.*\\)\\'" line)
+            (flush-paragraph)
+            (flush-list)
+            (flush-table)
+            (push (match-string 1 line) quote-lines))
+           ((string-match "\\`[ \t]*[-*+][ \t]+\\(.+\\)\\'" line)
+            (flush-paragraph)
+            (flush-quote)
+            (flush-table)
+            (when (and list-kind (not (eq list-kind 'ul)))
+              (flush-list))
+            (setq list-kind 'ul)
+            (push (match-string 1 line) list-items))
+           ((string-match "\\`[ \t]*[0-9]+\\.[ \t]+\\(.+\\)\\'" line)
+            (flush-paragraph)
+            (flush-quote)
+            (flush-table)
+            (when (and list-kind (not (eq list-kind 'ol)))
+              (flush-list))
+            (setq list-kind 'ol)
+            (push (match-string 1 line) list-items))
+           ((and list-items
+                 (string-match "\\`[ \t]\\{2,\\}\\(.+\\)\\'" line))
+            (setcar list-items
+                    (string-join
+                     (list (car list-items) (string-trim (match-string 1 line)))
+                     " ")))
+           ((hnview--markdown-table-line-p line)
+            (flush-paragraph)
+            (flush-list)
+            (flush-quote)
+            (push line table-lines))
+           (t
+            (flush-list)
+            (flush-quote)
+            (flush-table)
+            (push (string-trim line) paragraph)))))
+      (flush-blocks))
+    (apply #'dom-node 'div '((class . "hnview-markdown-article"))
+           (nreverse nodes))))
+
+(defun hnview--markdown-horizontal-rule-p (line)
+  "Return non-nil when LINE is a Markdown horizontal rule."
+  (let ((trimmed (replace-regexp-in-string "[ \t]" "" line)))
+    (and (>= (length trimmed) 3)
+         (or (string-match-p "\\`-+\\'" trimmed)
+             (string-match-p "\\`\\*+\\'" trimmed)
+             (string-match-p "\\`_+\\'" trimmed)))))
+
+(defun hnview--markdown-code-fence-language (text)
+  "Return normalized Markdown code fence language from TEXT."
+  (when-let* ((language (hnview--readability-clean-string text)))
+    (downcase
+     (replace-regexp-in-string
+      "\\`[.]" ""
+      (car (split-string language "[ \t]" t))))))
+
+(defun hnview--markdown-table-line-p (line)
+  "Return non-nil when LINE looks like a Markdown table row."
+  (string-match-p "\\`[ \t]*|" line))
+
+(defun hnview--markdown-table-dom (lines base-url)
+  "Return a table DOM for Markdown table LINES resolved against BASE-URL."
+  (let ((rows (mapcar #'hnview--markdown-table-row-cells lines)))
+    (when (and (>= (length rows) 2)
+               (hnview--markdown-table-separator-row-p (cadr rows)))
+      (let ((header (car rows))
+            (body (cddr rows)))
+        (apply
+         #'dom-node 'table nil
+         (delq nil
+               (list
+                (dom-node
+                 'thead nil
+                 (hnview--markdown-table-row-dom 'th header base-url))
+                (when body
+                  (apply
+                   #'dom-node 'tbody nil
+                   (mapcar
+                    (lambda (cells)
+                      (hnview--markdown-table-row-dom 'td cells base-url))
+                    body))))))))))
+
+(defun hnview--markdown-table-row-cells (line)
+  "Return Markdown table cells parsed from LINE."
+  (let* ((trimmed (string-trim line))
+         (without-leading (if (string-prefix-p "|" trimmed)
+                              (substring trimmed 1)
+                            trimmed))
+         (without-trailing (if (string-suffix-p "|" without-leading)
+                               (substring without-leading 0 -1)
+                             without-leading)))
+    (mapcar #'string-trim (split-string without-trailing "|"))))
+
+(defun hnview--markdown-table-separator-row-p (cells)
+  "Return non-nil when CELLS are a Markdown table separator row."
+  (and cells
+       (cl-every
+        (lambda (cell)
+          (string-match-p "\\`[ \t]*:?-\\{3,\\}:?[ \t]*\\'" cell))
+        cells)))
+
+(defun hnview--markdown-table-row-dom (cell-tag cells base-url)
+  "Return a table row DOM with CELL-TAG for CELLS resolved against BASE-URL."
+  (apply #'dom-node 'tr nil
+         (mapcar
+          (lambda (cell)
+            (apply #'dom-node cell-tag nil
+                   (hnview--markdown-inline-nodes cell base-url)))
+          cells)))
+
+(defun hnview--markdown-inline-nodes (text base-url)
+  "Return inline DOM nodes for Markdown TEXT resolved against BASE-URL."
+  (let ((start 0)
+        nodes)
+    (while (string-match
+            (concat "\\(!?\\)\\[\\([^]\n]+\\)\\](\\([^)\n]+\\))"
+                    "\\|`\\([^`\n]+\\)`"
+                    "\\|\\*\\*\\([^*\n]+\\)\\*\\*"
+                    "\\|\\*\\([^*\n]+\\)\\*")
+            text start)
+      (let ((prefix (substring text start (match-beginning 0))))
+        (unless (string-empty-p prefix)
+          (push prefix nodes))
+        (cond
+         ((match-beginning 2)
+          (let ((image-p (string= (match-string 1 text) "!"))
+                (label (match-string 2 text))
+                (url (hnview--resolve-url base-url (match-string 3 text))))
+            (push (if image-p
+                      (dom-node 'img `((src . ,url) (alt . ,label)))
+                    (dom-node 'a `((href . ,url))
+                              (hnview--markdown-unescape-inline label)))
+                  nodes)))
+         ((match-beginning 4)
+          (push (dom-node 'code nil
+                          (hnview--markdown-unescape-inline
+                           (match-string 4 text)))
+                nodes))
+         ((match-beginning 5)
+          (push (apply #'dom-node 'strong nil
+                       (hnview--markdown-inline-nodes
+                        (match-string 5 text) base-url))
+                nodes))
+         ((match-beginning 6)
+          (push (apply #'dom-node 'em nil
+                       (hnview--markdown-inline-nodes
+                        (match-string 6 text) base-url))
+                nodes)))
+        (setq start (match-end 0))))
+    (let ((suffix (substring text start)))
+      (unless (string-empty-p suffix)
+        (push (hnview--markdown-unescape-inline suffix) nodes)))
+    (nreverse nodes)))
+
+(defun hnview--markdown-unescape-inline (text)
+  "Return TEXT with simple Markdown backslash escapes removed."
+  (replace-regexp-in-string "\\\\([][(){}*_`#+.!-])" "\\1" text))
 
 (defun hnview--readability-parse-html (html)
   "Parse HTML into a libxml DOM."
@@ -2129,11 +2449,34 @@ REMAINING is a mutable one-item list containing the fetch budget."
   (let ((tag (dom-tag node)))
     (or (memq tag hnview--readability-noise-tags)
         (hnview--readability-hidden-node-p node)
+        (hnview--readability-toc-node-p node)
+        (hnview--readability-hard-negative-node-p node)
+        (hnview--readability-empty-inline-image-node-p node)
         (and (eq tag 'img)
-             (hnview--readability-tiny-image-p node))
+             (or (hnview--readability-tiny-image-p node)
+                 (hnview--readability-decorative-image-p node)))
         (and (not (memq tag '(html body article main)))
              (hnview--readability-negative-node-p node)
              (not (hnview--readability-positive-node-p node))))))
+
+(defun hnview--readability-toc-node-p (node)
+  "Return non-nil when NODE is a table-of-contents container."
+  (string-match-p
+   "\\(?:\\`\\|[-_[:space:]]\\)\\(?:toc\\|table[-_ ]of[-_ ]contents\\)\\(?:\\'\\|[-_[:space:]]\\)"
+   (hnview--readability-attribute-text node)))
+
+(defun hnview--readability-hard-negative-node-p (node)
+  "Return non-nil when NODE is a non-article embedded module."
+  (string-match-p hnview--readability-hard-negative-regexp
+                  (hnview--readability-attribute-text node)))
+
+(defun hnview--readability-empty-inline-image-node-p (node)
+  "Return non-nil when NODE is an inline image shell without an image."
+  (let ((attributes (hnview--readability-attribute-text node)))
+    (and (string-match-p "\\(?:\\`\\|[-_[:space:]]\\)inline[-_]?image\\(?:\\'\\|[-_[:space:]]\\)"
+                         attributes)
+         (not (cl-some #'hnview--readability-image-source
+                       (dom-by-tag node 'img))))))
 
 (defun hnview--readability-hidden-node-p (node)
   "Return non-nil when NODE is explicitly hidden."
@@ -2173,6 +2516,19 @@ REMAINING is a mutable one-item list containing the fetch budget."
     (or (and width (<= width 2))
         (and height (<= height 2)))))
 
+(defun hnview--readability-decorative-image-p (node)
+  "Return non-nil when NODE is a likely decorative image."
+  (string-match-p
+   "\\(?:\\`\\|[-_[:space:]/.]\\)\\(?:avatar\\|badge\\|icon\\|logo\\|sprite\\)\\(?:\\'\\|[-_[:space:]/.]\\)"
+   (downcase
+    (string-join
+     (delq nil
+           (list (dom-attr node 'alt)
+                 (dom-attr node 'class)
+                 (dom-attr node 'id)
+                 (dom-attr node 'src)))
+     " "))))
+
 (defun hnview--readability-number-attr (node attr)
   "Return numeric ATTR from NODE, or nil."
   (when-let* ((value (dom-attr node attr)))
@@ -2183,9 +2539,66 @@ REMAINING is a mutable one-item list containing the fetch budget."
   "Return the highest-scoring readable content node from DOM."
   (let* ((candidates (hnview--readability-candidate-nodes dom))
          (scored (hnview--readability-scored-candidates candidates nil)))
-    (or (cdr (car (sort scored (lambda (a b) (> (car a) (car b))))))
-        (cdr (car (sort (hnview--readability-scored-candidates candidates t)
-                        (lambda (a b) (> (car a) (car b)))))))))
+    (or (when-let* ((candidate
+                     (cdr (car (sort scored
+                                      (lambda (a b)
+                                        (> (car a) (car b))))))))
+          (hnview--readability-focused-candidate candidate))
+        (when-let* ((candidate
+                     (cdr (car (sort
+                                (hnview--readability-scored-candidates
+                                 candidates t)
+                                (lambda (a b)
+                                  (> (car a) (car b))))))))
+          (hnview--readability-focused-candidate candidate)))))
+
+(defun hnview--readability-focused-candidate (node)
+  "Return NODE or a more focused descendant article container."
+  (let ((candidate node)
+        next)
+    (while (setq next
+                 (hnview--readability-focused-child candidate))
+      (setq candidate next))
+    candidate))
+
+(defun hnview--readability-focused-child (node)
+  "Return a descendant of NODE that is a better focused article container."
+  (let* ((parent-text (hnview--readability-node-text node))
+         (parent-score (hnview--readability-score node parent-text))
+         (children (cl-remove-if
+                    (lambda (child)
+                      (eq child node))
+                    (hnview--readability-candidate-nodes node)))
+         (scored
+          (sort (hnview--readability-scored-candidates children nil)
+                (lambda (a b) (> (car a) (car b))))))
+    (cl-loop for pair in scored
+             for child = (cdr pair)
+             when (hnview--readability-focused-child-p
+                   node parent-text parent-score child (car pair))
+             return child)))
+
+(defun hnview--readability-focused-child-p
+    (parent parent-text parent-score child child-score)
+  "Return non-nil when CHILD is a better article focus than PARENT.
+PARENT-TEXT and PARENT-SCORE are precomputed for PARENT.  CHILD-SCORE is
+precomputed for CHILD."
+  (let* ((parent-length (length parent-text))
+         (child-text (hnview--readability-node-text child))
+         (child-length (length child-text))
+         (parent-paragraph-score (hnview--readability-paragraph-score parent))
+         (child-paragraph-score (hnview--readability-paragraph-score child)))
+    (and (not (memq (dom-tag child) '(body html)))
+         (>= child-length hnview-article-min-text-length)
+         (or (zerop parent-length)
+             (>= (/ (float child-length) parent-length) 0.55))
+         (or (<= parent-score 0)
+             (>= child-score (* parent-score 0.72)))
+         (or (< parent-paragraph-score 20)
+             (>= child-paragraph-score (* parent-paragraph-score 0.7)))
+         (<= (hnview--readability-link-density child child-length)
+             (+ (hnview--readability-link-density parent parent-length)
+                0.02)))))
 
 (defun hnview--readability-scored-candidates (candidates include-body)
   "Return scored readability CANDIDATES.
@@ -2328,6 +2741,48 @@ not outscore narrower article containers."
 (defconst hnview--article-translatable-tags
   '(p li blockquote figcaption h1 h2 h3 h4 h5 h6)
   "Article DOM tags translated as independent blocks.")
+
+(defconst hnview--article-code-language-modes
+  '(("asm" asm-mode)
+    ("assembly" asm-mode)
+    ("bash" (treesit bash bash-ts-mode) sh-mode)
+    ("c" (treesit c c-ts-mode) c-mode)
+    ("c++" (treesit cpp c++-ts-mode) c++-mode)
+    ("cc" (treesit cpp c++-ts-mode) c++-mode)
+    ("cl" lisp-mode)
+    ("conf" conf-mode)
+    ("cpp" (treesit cpp c++-ts-mode) c++-mode)
+    ("css" (treesit css css-ts-mode) css-mode)
+    ("diff" diff-mode)
+    ("el" emacs-lisp-mode)
+    ("elisp" emacs-lisp-mode)
+    ("emacs-lisp" emacs-lisp-mode)
+    ("go" (treesit go go-ts-mode) go-mode)
+    ("html" (treesit html html-ts-mode) html-mode)
+    ("ini" conf-mode)
+    ("java" java-mode)
+    ("javascript" (treesit javascript js-ts-mode) js-mode)
+    ("js" (treesit javascript js-ts-mode) js-mode)
+    ("json" (treesit json json-ts-mode) js-json-mode json-mode)
+    ("lisp" lisp-mode)
+    ("make" makefile-mode)
+    ("makefile" makefile-mode)
+    ("patch" diff-mode)
+    ("py" (treesit python python-ts-mode) python-mode)
+    ("python" (treesit python python-ts-mode) python-mode)
+    ("rs" (treesit rust rust-ts-mode) rust-mode)
+    ("rust" (treesit rust rust-ts-mode) rust-mode)
+    ("sh" (treesit bash bash-ts-mode) sh-mode)
+    ("shell" (treesit bash bash-ts-mode) sh-mode)
+    ("sql" sql-mode)
+    ("ts" (treesit typescript typescript-ts-mode) js-mode)
+    ("typescript" (treesit typescript typescript-ts-mode) js-mode)
+    ("xml" nxml-mode)
+    ("yaml" (treesit yaml yaml-ts-mode) yaml-mode)
+    ("yml" (treesit yaml yaml-ts-mode) yaml-mode))
+  "Modes used to syntax-highlight article code blocks.
+Entries can name ordinary major modes, or tree-sitter specs of the form
+\(treesit LANGUAGE MODE).")
 
 (defun hnview--article-id (article)
   "Return stable internal ID for ARTICLE."
@@ -3873,12 +4328,49 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
      (when (buffer-live-p buffer)
        (with-current-buffer buffer
          (when (equal hnview--article-url url)
+           (if error
+               (progn
+                 (setq-local hnview--article-loading-message nil)
+                 (setq-local hnview--article-error-message error)
+                 (hnview--render-article))
+             (hnview--handle-article-html url html buffer))))))))
+
+(defun hnview--handle-article-html (url html buffer)
+  "Extract fetched article HTML for URL into BUFFER."
+  (condition-case err
+      (let* ((article (hnview--readability-extract html url))
+             (markdown-url (hnview--readability-markdown-source-url
+                            html url)))
+        (if (and markdown-url
+                 (hnview--readability-needs-markdown-source-p article))
+            (progn
+              (setq-local hnview--article-loading-message
+                          "Loading article markdown...")
+              (hnview--render-article)
+              (hnview--fetch-article-markdown url markdown-url html buffer))
+          (setq-local hnview--article-loading-message nil)
+          (setq-local hnview--article article)
+          (hnview--render-article)))
+    (error
+     (setq-local hnview--article-loading-message nil)
+     (setq-local hnview--article-error-message (error-message-string err))
+     (hnview--render-article))))
+
+(defun hnview--fetch-article-markdown (url markdown-url html buffer)
+  "Fetch MARKDOWN-URL for article URL HTML and render it into BUFFER."
+  (hnview--url-text
+   markdown-url
+   (lambda (error markdown)
+     (when (buffer-live-p buffer)
+       (with-current-buffer buffer
+         (when (equal hnview--article-url url)
            (setq-local hnview--article-loading-message nil)
            (if error
                (setq-local hnview--article-error-message error)
              (condition-case err
                  (setq-local hnview--article
-                             (hnview--readability-extract html url))
+                             (hnview--readability-extract-markdown
+                              html url markdown-url markdown))
                (error
                 (setq-local hnview--article-error-message
                             (error-message-string err)))))
@@ -4079,20 +4571,133 @@ When PRESERVE-STATE is t, preserve the article block around current point."
 (defun hnview--insert-article-content (article)
   "Insert readable ARTICLE content."
   (if (plist-get article :content-dom)
-      (pcase-let* ((`(,dom . ,segments)
-                    (hnview--article-prepare-render-dom article))
-                   (url (plist-get article :url))
-                   (start (point))
-                   (shr-width hnview-article-width)
-                   (shr-max-width hnview-article-width)
-                   (shr-fill-text nil)
-                   (shr-use-fonts nil)
-                   (shr-inhibit-images (not hnview--article-images-visible-p))
-                   (shr-max-image-proportion 1.0)
-                   (shr-put-image-function #'hnview--article-put-image))
-        (shr-insert-document (hnview--readability-wrap-dom dom url))
+      (let* ((rendered-dom (hnview--article-prepare-render-dom article))
+             (dom (car rendered-dom))
+             (segments (cdr rendered-dom))
+             (url (plist-get article :url))
+             (start (point))
+             (shr-width hnview-article-width)
+             (shr-max-width hnview-article-width)
+             (shr-fill-text nil)
+             (shr-use-fonts nil)
+             (shr-inhibit-images (not hnview--article-images-visible-p))
+             (shr-max-image-proportion 1.0)
+             (shr-put-image-function #'hnview--article-put-image)
+             (pre-renderer (symbol-function 'shr-tag-pre))
+             code-blocks)
+        (cl-letf (((symbol-function 'shr-tag-pre)
+                   (lambda (pre-dom)
+                     (let ((block-start (point))
+                           (language
+                            (hnview--article-code-language pre-dom)))
+                       (funcall pre-renderer pre-dom)
+                       (when language
+                         (push (list block-start (point) language)
+                               code-blocks))))))
+          (shr-insert-document (hnview--readability-wrap-dom dom url)))
+        (when hnview-article-highlight-code
+          (hnview--article-highlight-code-blocks (nreverse code-blocks)))
         (hnview--annotate-article-segments start (point) segments))
     (hnview--insert-line "No readable content found." 'hnview-meta)))
+
+(defun hnview--article-code-language (pre-dom)
+  "Return code language declared on PRE-DOM or its code child."
+  (let* ((code-dom (car (dom-by-tag pre-dom 'code)))
+         (language
+          (or (dom-attr pre-dom 'data-hnview-code-language)
+              (dom-attr pre-dom 'data-language)
+              (dom-attr code-dom 'data-language)
+              (hnview--article-code-language-from-class
+               (string-join
+                (delq nil
+                      (list (dom-attr pre-dom 'class)
+                            (dom-attr code-dom 'class)))
+                " ")))))
+    (when language
+      (downcase (format "%s" language)))))
+
+(defun hnview--article-code-language-from-class (class)
+  "Return code language parsed from CLASS."
+  (when (string-match
+         "\\(?:\\`\\|[ \t]\\)\\(?:language\\|lang\\|src\\)-\\([^ \t\n\r]+\\)"
+         (or class ""))
+    (match-string 1 class)))
+
+(defun hnview--article-highlight-code-blocks (code-blocks)
+  "Apply syntax highlighting to CODE-BLOCKS.
+Each entry is (START END LANGUAGE) in the current buffer."
+  (dolist (block code-blocks)
+    (pcase-let ((`(,start ,end ,language) block))
+      (when-let* ((mode (hnview--article-code-mode language)))
+        (condition-case nil
+            (hnview--article-highlight-code-block start end mode)
+          (error nil))))))
+
+(defun hnview--article-code-mode (language)
+  "Return a major mode suitable for code LANGUAGE."
+  (cl-loop for spec in (cdr (assoc-string
+                             language
+                             hnview--article-code-language-modes
+                             t))
+           for mode = (hnview--article-code-mode-spec-mode spec)
+           when mode return mode))
+
+(defun hnview--article-code-mode-spec-mode (spec)
+  "Return available mode for code language mode SPEC."
+  (pcase spec
+    (`(treesit ,language ,mode)
+     (when (and (commandp mode)
+                (hnview--article-treesit-ready-p language))
+       mode))
+    ((pred symbolp)
+     (when (commandp spec)
+       spec))))
+
+(defun hnview--article-treesit-ready-p (language)
+  "Return non-nil when tree-sitter LANGUAGE can be used."
+  (and (require 'treesit nil t)
+       (fboundp 'treesit-ready-p)
+       (treesit-ready-p language t)))
+
+(defun hnview--article-highlight-code-block (start end mode)
+  "Syntax-highlight current buffer region START to END using MODE."
+  (let ((source (buffer-substring-no-properties start end))
+        spans)
+    (with-temp-buffer
+      (insert source)
+      (let ((font-lock-verbose nil)
+            (inhibit-message t)
+            (treesit-font-lock-level 4))
+        (delay-mode-hooks
+          (funcall mode))
+        (font-lock-ensure (point-min) (point-max))
+        (when jit-lock-mode
+          (jit-lock-fontify-now)))
+      (setq spans (hnview--article-font-lock-spans)))
+    (dolist (span spans)
+      (pcase-let ((`(,from ,to ,face) span))
+        (put-text-property (+ start from)
+                           (+ start to)
+                           'face face)))))
+
+(defun hnview--article-font-lock-spans ()
+  "Return face spans from the current font-locked buffer."
+  (let ((pos (point-min))
+        spans)
+    (while (< pos (point-max))
+      (let* ((face (or (get-text-property pos 'face)
+                       (get-text-property pos 'font-lock-face)))
+             (next (min (next-single-property-change pos 'face nil
+                                                      (point-max))
+                        (next-single-property-change pos 'font-lock-face nil
+                                                     (point-max)))))
+        (when face
+          (push (list (- pos (point-min))
+                      (- next (point-min))
+                      face)
+                spans))
+        (setq pos next)))
+    (nreverse spans)))
 
 (defun hnview--annotate-article-segments (start end segments)
   "Add article item properties between START and END for SEGMENTS."
@@ -4125,23 +4730,58 @@ When PRESERVE-STATE is t, preserve the article block around current point."
 
 (defun hnview--article-put-image (spec alt &optional flags)
   "Insert image SPEC with ALT and FLAGS scaled to window width."
-  (let ((max-width (hnview--article-image-max-width-pixels))
-        (max-height (hnview--article-image-max-height-pixels))
+  (let ((max-height (hnview--article-image-max-height-pixels))
         (rescale (symbol-function 'shr-rescale-image))
         (shr-image-zoom-levels '(fit original image fill-height)))
     (cl-letf (((symbol-function 'shr-rescale-image)
                (lambda (data content-type width height
                              &optional _max-width _max-height)
-                 (let ((shr-max-image-proportion 1.0))
+                 (let* ((shr-max-image-proportion 1.0)
+                        (natural-width
+                         (hnview--article-image-natural-width
+                          data content-type width))
+                        (max-width
+                         (hnview--article-image-max-width-pixels
+                          natural-width)))
                    (funcall rescale data content-type width height
                             max-width max-height)))))
       (shr-put-image spec alt flags))))
 
-(defun hnview--article-image-max-width-pixels ()
-  "Return maximum image width in pixels for the current article."
-  (max 80
-       (- (hnview--article-window-width-pixels)
-          (* 2 (frame-char-width)))))
+(defun hnview--article-image-natural-width (data content-type fallback-width)
+  "Return natural image width for DATA with CONTENT-TYPE.
+Fall back to FALLBACK-WIDTH when the image size cannot be read."
+  (or (when-let* ((image (ignore-errors
+                           (create-image data nil t :format content-type)))
+                  (size (ignore-errors (image-size image t)))
+                  (width (car size)))
+        (and (numberp width)
+             (> width 0)
+             width))
+      (and (numberp fallback-width)
+           (> fallback-width 0)
+           fallback-width)))
+
+(defun hnview--article-image-max-width-pixels (&optional original-width)
+  "Return maximum image width in pixels for the current article.
+If ORIGINAL-WIDTH is wider than the window, scale it to the configured window
+ratio without shrinking below the configured original image ratio."
+  (let* ((window-width (hnview--article-window-width-pixels))
+         (window-limit (truncate
+                        (* window-width
+                           hnview-article-image-max-window-ratio)))
+         (original-limit
+          (when (and (numberp original-width)
+                     (> original-width 0))
+            (truncate
+             (* original-width
+                hnview-article-image-min-original-ratio)))))
+    (cond
+     ((not original-limit)
+      window-width)
+     ((> original-width window-width)
+      (max window-limit original-limit))
+     (t
+      original-width))))
 
 (defun hnview--article-image-max-height-pixels ()
   "Return maximum image height in pixels for the current article."

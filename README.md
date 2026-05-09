@@ -33,7 +33,7 @@ Not included in the first version:
 
 - Emacs 29.1 or newer, built with SQLite support.
 - `llm.el` for translation.
-- `plz.el` for Hacker News login, reply submission, and voting requests.
+- `plz.el` for HTTP requests.
 
 ## Usage
 
@@ -59,26 +59,32 @@ Then call:
 M-x hnview
 ```
 
-Key bindings:
+Primary key bindings use an Emacs-style mode prefix, `C-c C-v`:
 
 | Key | Action |
 | --- | --- |
-| `g` | Refresh current buffer |
-| `f` | Switch feed |
-| `s` | Switch feed sub-section |
-| `1`-`6` | Open Top, Ask, Show, Best, New, Active |
-| `RET` | Open the item at point |
-| `o` | Open original story URL in the system browser |
-| `e` | Open original story URL in EWW |
-| `a` | Open original story URL in hnview's article reader |
-| `b` | Toggle bookmark |
-| `r` | Compose a reply to the story or comment at point |
-| `u` | Upvote the story or comment at point |
-| `t` | Toggle translation at point, translating first if needed |
-| `T` | Toggle translation for all visible titles, comments, or article blocks |
-| `TAB` | Toggle comment folding |
-| `+` | Load more comments in a thread |
-| `*` | Load all comments in a thread |
+| `C-c C-v g` | Refresh current buffer |
+| `C-c C-v f` | Switch feed, or switch profile section in profile buffers |
+| `C-c C-v s` | Switch feed sub-section |
+| `C-c C-v 1`-`6` | Open Top, Ask, Show, Best, New, Active, or profile sections |
+| `C-c C-v o` | Open original story URL in the system browser |
+| `C-c C-v e` | Open original story URL in EWW |
+| `C-c C-v a` | Open original story URL in hnview's article reader |
+| `C-c C-v b` | Toggle bookmark |
+| `C-c C-v r` | Compose a reply to the story or comment at point |
+| `C-c C-v u` | Upvote the story or comment at point |
+| `C-c C-v t` | Toggle translation at point, translating first if needed |
+| `C-c C-v T` | Toggle translation for all visible titles, comments, or article blocks |
+| `C-c C-v +` | Load more comments in a thread |
+| `C-c C-v *` | Load all comments in a thread |
+| `C-c C-v i` | Toggle images in article buffers |
+
+Read-only buffer conventions:
+
+| Key | Action |
+| --- | --- |
+| `RET` | Open the item or link at point |
+| `TAB` | Fold comments in thread buffers, or move to the next link in article buffers |
 | `n` / `p` | Move between items |
 | `q` | Quit the current hnview buffer |
 
@@ -86,13 +92,6 @@ When Evil is active, hnview buffers enter Emacs state by default so the native
 read-only keymap above works unchanged.  Set
 `hnview-use-emacs-state-in-evil` to nil if you prefer to manage Evil state
 yourself.
-
-In profile buffers:
-
-| Key | Action |
-| --- | --- |
-| `f` | Switch profile section |
-| `RET` | Open the item at point |
 
 ## Profiles
 
@@ -117,18 +116,47 @@ available for the logged-in user.
 
 ## Article Reader
 
-Press `a` on a story to open the original URL in `hnview-article-mode`. The
-article reader extracts the main page content into an Emacs buffer, keeps
-paragraphs as logical lines wrapped by `visual-line-mode`, and scales oversized
-images to the current window width. Use `i` to toggle images, `RET` or `TAB` to
-work with links, `o` to open the page externally, and `e` to open it in EWW.
+Press `C-c C-v a` on a story to open the original URL in
+`hnview-article-mode`. The article reader extracts the main page content into
+an Emacs buffer, keeps paragraphs as logical lines wrapped by
+`visual-line-mode`, and follows Markdown sources for JavaScript shell pages
+that expose a Markdown article file. Markdown headings, lists, tables, links,
+images, block quotes, and fenced code blocks are rendered as native Emacs
+content instead of raw Markdown markers.
+
+Oversized images shrink only when their actual width is wider than the current
+window. In that case hnview uses 80% of the window width, but never shrinks
+below 50% of the image's original width. Smaller images are not enlarged or
+shrunk. Use `C-c C-v i` to toggle images, `RET` or `TAB` to work with links,
+`C-c C-v o` to open the page externally, and `C-c C-v e` to open it in EWW.
+
+Fenced code blocks use Emacs syntax highlighting. When a matching tree-sitter
+major mode and grammar are available, hnview uses the tree-sitter mode with
+high-detail font-lock; otherwise it falls back to the regular major mode for
+that language. Set `hnview-article-highlight-code` to nil to disable article
+code highlighting.
 
 Article buffers reuse the same translation cache and async translation pipeline
-as HN feeds and comments. Press `t` to translate or restore the title or block
-at point, and `T` to translate or restore the article title and all readable
-text blocks. Article translation cache entries are stored in SQLite with a
-synthetic article identity derived from the source URL, so cache hits do not
-call the LLM provider again.
+as HN feeds and comments. Press `C-c C-v t` to translate or restore the title
+or block at point, and `C-c C-v T` to translate or restore the article title
+and all readable text blocks. Article translation cache entries are stored in
+SQLite with a synthetic article identity derived from the source URL, so cache
+hits do not call the LLM provider again.
+
+For local reader diagnostics, run:
+
+```sh
+emacs -Q --batch -L . -L ~/.emacs.d/straight/build/plz -l scripts/check-article-reader.el -- --fetch
+```
+
+The script stores downloaded HTML under `test/local-fixtures/articles/`, which
+is intentionally ignored by git.  Rerun it without `--fetch` to validate the
+cached pages without network access.  To try the current Hacker News Top feed
+against the reader, run:
+
+```sh
+emacs -Q --batch -L . -L ~/.emacs.d/straight/build/plz -l scripts/check-article-reader.el -- --hn-top --fetch --limit=30
+```
 
 ## Translation
 
@@ -190,9 +218,9 @@ To make translation the default across hnview buffers:
 (setq hnview-translate-by-default t)
 ```
 
-Press `t` to toggle translation for the item or article block at point,
-translating it first if needed. Press `T` to toggle translation for all visible
-titles, comments, or article blocks:
+Press `C-c C-v t` to toggle translation for the item or article block at point,
+translating it first if needed. Press `C-c C-v T` to toggle translation for all
+visible titles, comments, or article blocks:
 when any visible translation is active it switches visible items back to the
 original text; otherwise it shows cached translations and starts missing
 translations asynchronously. Translated text replaces the original text in
@@ -201,20 +229,21 @@ metadata, status markers, indentation, and comment hierarchy stay unchanged.
 While translations are
 pending, the original text stays visible and the mode line shows the pending
 translation count. Batch translation is throttled by
-`hnview-translation-concurrency` so `T` does not start every visible comment at
-once. Empty translation results are retried according to
+`hnview-translation-concurrency` so `C-c C-v T` does not start every visible
+comment at once. Empty translation results are retried according to
 `hnview-translation-empty-retry-count` and are not cached. Successful
 translations are cached in the SQLite database at `hnview-database-file`.
 Cached translations do not replace originals by default unless
-`hnview-translate-by-default` is enabled or you toggle translation with `t`/`T`.
+`hnview-translate-by-default` is enabled or you toggle translation with
+`C-c C-v t`/`C-c C-v T`.
 Cache hits are served from SQLite without calling the LLM provider, so showing
 an already cached translation does not consume API tokens. Changing the target
 language, prompt template, glossary, backend, or source text creates a different
 cache key and may trigger a new translation request.
 
 Upvoting uses Hacker News' logged-in vote endpoint. Run `M-x hnview-login`
-first. After a successful `u` vote, hnview shows `△` as a session-local status
-marker; it is not stored in SQLite.
+first. After a successful `C-c C-v u` vote, hnview shows `△` as a
+session-local status marker; it is not stored in SQLite.
 
 Run `M-x hnview-translation-status` to inspect whether `llm.el` and
 `hnview-llm-provider` are visible to hnview.
@@ -273,7 +302,7 @@ Then:
 M-x hnview-login
 ```
 
-Press `r` on a story or comment to open a reply buffer. In that buffer:
+Press `C-c C-v r` on a story or comment to open a reply buffer. In that buffer:
 
 | Key | Action |
 | --- | --- |

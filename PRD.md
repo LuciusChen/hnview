@@ -23,9 +23,9 @@ work is packaging polish plus a few advanced HN workflows.
 | --- | --- | --- |
 | Feed browsing | Done | Top, Ask, Show, Best, New, Active; Ask/Show and Best/New sub-sections. |
 | Thread reading | Done | Story header, nested comments, load more/all. |
-| Article reader | Prototype | Extracts original story pages into native Emacs buffers with window-scaled images and block translation. |
+| Article reader | Prototype | Extracts original story pages into native Emacs buffers with Markdown fallback, syntax-highlighted code, bounded image scaling, and block translation. |
 | Comment UX | Done | Keyboard folding, inline `N more`, quote rendering, author styling. |
-| Translation | Done | `llm.el`, `t`/`T`, in-place replacement, SQLite cache, pruning. |
+| Translation | Done | `llm.el`, `C-c C-v t`/`C-c C-v T`, in-place replacement, SQLite cache, pruning. |
 | Point preservation | Done | Translation toggle keeps point in the current comment. |
 | Bookmarks | Done | SQLite-backed local bookmarks. |
 | Login/reply | Done | `auth-source` credentials, HN web forms, reply buffer. |
@@ -76,9 +76,9 @@ Secondary user:
 - Show Top, Ask, Show, Best, New, and Active feeds.
 - Support Ask/Show Top and New sub-sections, plus Best/New Stories and
   Comments sub-sections.
-- Switch feeds with both feed picker and number shortcuts; switch sub-sections
-  with `s`.
-- Refresh the current buffer with `g`.
+- Switch feeds with both feed picker and prefixed number shortcuts; switch
+  sub-sections with `C-c C-v s`.
+- Refresh the current buffer with `C-c C-v g`.
 - Display each story with title, domain, points, author, age, and comment count.
 - Open original URLs through the system browser or EWW.
 
@@ -87,8 +87,8 @@ Secondary user:
 - Open story threads inside Emacs.
 - Render story title, metadata, and optional story text.
 - Render nested comments with indentation and stable metadata alignment.
-- Load more comments with `+`.
-- Load all comments with `*`.
+- Load more comments with `C-c C-v +`.
+- Load all comments with `C-c C-v *`.
 - Detect truncated comment trees and show a load-more hint.
 
 ### 6.3 Comment Interaction
@@ -121,13 +121,13 @@ Secondary user:
 - Translate titles, story text, and comments.
 - `hnview-translate-by-default` enables translated display and asynchronous
   missing translation requests by default across hnview buffers.
-- `t` toggles translation for the current item:
+- `C-c C-v t` toggles translation for the current item:
   - If not translated, start translation.
   - If translated and visible, show original.
   - If translated and hidden, show translation again.
-- `T` toggles translation for all visible items.
-- Missing translations started by `T` must run asynchronously and must not
-  block normal Emacs interaction.
+- `C-c C-v T` toggles translation for all visible items.
+- Missing translations started by `C-c C-v T` must run asynchronously and must
+  not block normal Emacs interaction.
 - Batch translation should throttle concurrent item requests through
   `hnview-translation-concurrency`.
 - Translation replaces text in place while preserving layout.
@@ -162,7 +162,7 @@ Secondary user:
 - Submit replies through HN's regular web form.
 - Translate reply drafts to `hnview-reply-translate-target-language`.
 - Cancel reply drafts with `C-c C-k`.
-- Upvote the item at point with `u`.
+- Upvote the item at point with `C-c C-v u`.
 - Upvote must call HN's vote endpoint and require a valid login.
 - Show an upvote marker only after a successful upvote in the current Emacs
   session.
@@ -183,20 +183,30 @@ Secondary user:
 - About, Stories, and Comments should use public HN API data.
 - Favorites, Upvoted, and Hidden should use HN web pages and existing logged-in
   cookies when HN requires them.
-- Switch profile sections with `f` and fixed number keys.
+- Switch profile sections with `C-c C-v f` and fixed number keys.
 - Profile activity items should support the same open, bookmark, upvote, reply,
   and translation commands as feed/thread items where applicable.
 
 ### Article Reader
 
-- `a` opens the original story URL in an Emacs-native article reader buffer.
+- `C-c C-v a` opens the original story URL in an Emacs-native article reader
+  buffer.
 - Article buffers extract the main readable content from HTML rather than
   embedding a WebView.
+- JavaScript shell pages that declare a Markdown source should fetch and render
+  that Markdown source instead of showing raw Markdown text.
+- Markdown article rendering should cover headings, paragraphs, lists, tables,
+  links, images, block quotes, horizontal rules, and fenced code blocks.
+- Fenced code blocks should be syntax-highlighted with Emacs font-lock.
+  Tree-sitter major modes should be preferred when the matching grammar is
+  available, with regular major modes used as the fallback.
 - Paragraphs should remain logical lines and rely on Emacs visual wrapping.
-- Images should shrink to the current window width when their displayed size is
-  too large, without enlarging small images.
-- `t` toggles the title or readable block at point.
-- `T` toggles the article title and all readable text blocks.
+- Images should shrink only when their actual width is wider than the current
+  window. Oversized images should use 80% of the window width, but should not
+  shrink below 50% of their original width. Smaller images should keep their
+  original width.
+- `C-c C-v t` toggles the title or readable block at point.
+- `C-c C-v T` toggles the article title and all readable text blocks.
 - Article translations reuse the shared LLM transport, visibility state,
   asynchronous queue, and SQLite translation cache.
 
@@ -221,22 +231,24 @@ Secondary user:
 
 | Key | Scope | Action |
 | --- | --- | --- |
-| `g` | feed/thread/inbox/profile/article | Refresh |
-| `f` | feed/profile | Switch feed or profile section |
-| `1`-`6` | feed | Open fixed feed |
-| `1`-`6` | profile | Open fixed profile section |
+| `C-c C-v g` | feed/thread/inbox/profile/article | Refresh |
+| `C-c C-v f` | feed/profile | Switch feed or profile section |
+| `C-c C-v s` | feed | Switch feed sub-section |
+| `C-c C-v 1`-`6` | feed | Open fixed feed |
+| `C-c C-v 1`-`6` | profile | Open fixed profile section |
 | `RET` | feed/thread/profile/article | Open thread, item, URL, or link |
-| `o` | feed/thread/inbox/profile/article | Open original URL |
-| `e` | feed/thread/inbox/profile/article | Open original URL in EWW |
-| `a` | feed/thread/inbox/profile | Open article reader |
-| `b` | feed/thread/profile | Toggle bookmark |
-| `u` | feed/thread/inbox/profile | Upvote item |
-| `r` | feed/thread/inbox/profile | Reply |
-| `t` | feed/thread/inbox/profile/article | Toggle item or article block translation |
-| `T` | feed/thread/inbox/profile/article | Toggle visible item or article translations |
+| `C-c C-v o` | feed/thread/inbox/profile/article | Open original URL |
+| `C-c C-v e` | feed/thread/inbox/profile/article | Open original URL in EWW |
+| `C-c C-v a` | feed/thread/inbox/profile | Open article reader |
+| `C-c C-v b` | feed/thread/profile | Toggle bookmark |
+| `C-c C-v u` | feed/thread/inbox/profile | Upvote item |
+| `C-c C-v r` | feed/thread/inbox/profile | Reply |
+| `C-c C-v t` | feed/thread/inbox/profile/article | Toggle item or article block translation |
+| `C-c C-v T` | feed/thread/inbox/profile/article | Toggle visible item or article translations |
 | `TAB` | thread | Fold/unfold comment |
-| `+` | thread | Load more comments |
-| `*` | thread | Load all comments |
+| `C-c C-v +` | thread | Load more comments |
+| `C-c C-v *` | thread | Load all comments |
+| `C-c C-v i` | article | Toggle inline images |
 | `n`/`p` | feed/thread/inbox/profile | Next/previous item |
 | `q` | feed/thread/inbox/profile/article | Quit buffer |
 | `C-c C-t` | reply | Translate draft |
