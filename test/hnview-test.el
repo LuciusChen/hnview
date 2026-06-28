@@ -97,6 +97,15 @@
   (should-not (lookup-key hnview-thread-mode-map (kbd "+")))
   (should-not (lookup-key hnview-thread-mode-map (kbd "a"))))
 
+(ert-deftest hnview-thread-mode-enables-visual-wrapping ()
+  "Thread buffers should visually wrap long comment lines by default."
+  (with-temp-buffer
+    (hnview-thread-mode)
+    (should visual-line-mode)
+    (should-not truncate-lines)
+    (when (fboundp 'visual-wrap-prefix-mode)
+      (should (bound-and-true-p visual-wrap-prefix-mode)))))
+
 (ert-deftest hnview-inbox-mode-has-navigation-keys ()
   "Inbox buffers should expose navigation and refresh commands."
   (should (eq (lookup-key hnview-inbox-mode-map (kbd "C-c C-l"))
@@ -767,21 +776,31 @@ ioctl(sock, SIOCSIFFLAGS, &ifr);   /* -> page_pool_destroy */
                (buffer-substring (line-beginning-position)
                                  (line-end-position)))))))
 
-(ert-deftest hnview-article-pending-count-includes-article-items ()
-  "Article translation progress should appear in the mode-line count."
+(ert-deftest hnview-article-translation-updates-mode-line-count ()
+  "Started article translations should appear in the mode-line count."
   (let* ((paragraph "This article paragraph is currently being translated.")
          (html (format "<html><body><main><p>%s</p></main></body></html>"
                        paragraph))
          (article (hnview--readability-extract
                    html "https://example.com/article"))
          (item (car (hnview--article-body-items article)))
-         (hnview--pending-translations (make-hash-table :test #'equal)))
-    (puthash (hnview--translation-key item paragraph 'text)
-             t hnview--pending-translations)
+         (hnview--pending-translations (make-hash-table :test #'equal))
+         callback)
     (with-temp-buffer
       (hnview-article-mode)
       (setq-local hnview--article article)
-      (should (= (hnview--buffer-pending-translation-count) 1)))))
+      (cl-letf (((symbol-function 'hnview--translate-text)
+                 (lambda (_text cb &optional _target-language)
+                   (setq callback cb))))
+        (hnview--translate-unit
+         (hnview--translation-unit
+          (hnview--translation-item-key item) 'text paragraph
+          (hnview--translation-item-id item))
+         #'ignore))
+      (should (equal (hnview--translation-mode-line-status)
+                     " Translating:1"))
+      (funcall callback "Translation failed" nil)
+      (should-not (hnview--translation-mode-line-status)))))
 
 (ert-deftest hnview-fetch-article-ignores-stale-response ()
   "Article fetch callbacks should not update buffers now showing another URL."
@@ -899,6 +918,67 @@ ioctl(sock, SIOCSIFFLAGS, &ifr);   /* -> page_pool_destroy */
       (clrhash hnview--translations)
       (hnview--load-db-state)
       (should (equal (hnview--cached-translation-unit unit) "你好")))))
+
+(ert-deftest hnview-translation-mode-line-does-not-scan-buffer ()
+  "Translation mode-line status should be cheap when nothing is pending."
+  (let ((hnview--pending-translations (make-hash-table :test #'equal)))
+    (with-temp-buffer
+      (hnview-thread-mode)
+      (cl-letf (((symbol-function 'hnview--visible-buffer-items)
+                 (lambda ()
+                   (error "Mode line scanned buffer items"))))
+        (should-not (hnview--translation-mode-line-status))))))
+
+(ert-deftest hnview-translation-mode-line-tracks-started-units ()
+  "Translation mode-line status should use cached pending unit counts."
+  (let ((hnview--pending-translations (make-hash-table :test #'equal))
+        callback
+        done-error)
+    (with-temp-buffer
+      (hnview-thread-mode)
+      (cl-letf (((symbol-function 'hnview--translate-text)
+                 (lambda (_text cb &optional _target-language)
+                   (setq callback cb))))
+        (hnview--translate-unit
+         (hnview--translation-unit "item:1" 'text "Hello" 1)
+         (lambda (error _translation)
+           (setq done-error error))))
+      (should (= hnview--pending-translation-count 1))
+      (should (equal (hnview--translation-mode-line-status)
+                     " Translating:1"))
+      (funcall callback "Translation failed" nil)
+      (should (equal done-error "Translation failed"))
+      (should (= hnview--pending-translation-count 0))
+      (should-not (hnview--translation-mode-line-status)))))
+
+(ert-deftest hnview-stale-translation-does-not-decrement-new-mode-line ()
+  "Stale translation callbacks should not mutate reused buffer progress."
+  (let ((hnview--pending-translations (make-hash-table :test #'equal))
+        old-callback
+        new-callback)
+    (with-temp-buffer
+      (hnview-thread-mode)
+      (cl-letf (((symbol-function 'hnview--translate-text)
+                 (lambda (text callback &optional _target-language)
+                   (if (string= text "Old")
+                       (setq old-callback callback)
+                     (setq new-callback callback)))))
+        (hnview--translate-unit
+         (hnview--translation-unit "item:old" 'text "Old" 1)
+         #'ignore)
+        (should (= hnview--pending-translation-count 1))
+        (hnview-thread-mode)
+        (hnview--translate-unit
+         (hnview--translation-unit "item:new" 'text "New" 2)
+         #'ignore)
+        (should (= hnview--pending-translation-count 1))
+        (funcall old-callback "Old translation failed" nil)
+        (should (= hnview--pending-translation-count 1))
+        (should (equal (hnview--translation-mode-line-status)
+                       " Translating:1"))
+        (funcall new-callback "New translation failed" nil)
+        (should (= hnview--pending-translation-count 0))
+        (should-not (hnview--translation-mode-line-status))))))
 
 (ert-deftest hnview-empty-translation-renders-source-text ()
   "Empty cached translations should render the source text."
@@ -1519,16 +1599,11 @@ ioctl(sock, SIOCSIFFLAGS, &ifr);   /* -> page_pool_destroy */
 
 (ert-deftest hnview-translation-mode-line-shows-pending-count ()
   "Mode line should show pending translation count."
-  (let ((story '(:id 1 :type "story" :title "First"))
-        (hnview--pending-translations (make-hash-table :test #'equal)))
-    (puthash (hnview--translation-key story "First" 'title)
-             t hnview--pending-translations)
-    (with-temp-buffer
-      (hnview-feed-mode)
-      (let ((inhibit-read-only t))
-        (hnview--insert-title-segment story "First"))
-      (should (equal (hnview--translation-mode-line-status)
-                     " Translating:1")))))
+  (with-temp-buffer
+    (hnview-feed-mode)
+    (setq-local hnview--pending-translation-count 1)
+    (should (equal (hnview--translation-mode-line-status)
+                   " Translating:1"))))
 
 (ert-deftest hnview-comment-quote-lines-render-as-quotes ()
   "Comment quote markers should render as quote blocks."

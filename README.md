@@ -88,6 +88,10 @@ Read-only buffer conventions:
 | `n` / `p` | Move between items |
 | `q` | Quit the current hnview buffer |
 
+Thread buffers keep comments as logical paragraphs and enable visual wrapping
+by default. When available in the running Emacs, `visual-wrap-prefix-mode` is
+also enabled so wrapped comment lines keep their indentation.
+
 When Evil is active, hnview buffers enter Emacs state by default so the native
 read-only keymap above works unchanged.  Set
 `hnview-use-emacs-state-in-evil` to nil if you prefer to manage Evil state

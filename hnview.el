@@ -40,6 +40,7 @@
 (declare-function evil-emacs-state "evil")
 (declare-function evil-set-initial-state "evil")
 (declare-function treesit-ready-p "treesit" (language &optional quiet))
+(declare-function visual-wrap-prefix-mode "visual-wrap" (&optional arg))
 (defvar plz-curl-default-args)
 (defvar evil-local-mode)
 (defvar treesit-font-lock-level)
@@ -385,6 +386,10 @@ q, available in read-only buffers."
 (defvar-local hnview--article-loading-message nil)
 (defvar-local hnview--article-error-message nil)
 (defvar-local hnview--article-images-visible-p t)
+(defvar-local hnview--pending-translation-count 0
+  "Number of translation units started from this buffer and still pending.")
+(defvar-local hnview--pending-translation-token nil
+  "Identity token for translation progress in the current buffer source.")
 
 (defvar hnview-feed-mode-map
   (let ((map (make-sparse-keymap)))
@@ -3105,14 +3110,19 @@ id used only for persistence metadata."
 
 (defun hnview--translate-unit (unit callback)
   "Translate UNIT, then call CALLBACK with ERROR and TRANSLATION."
-  (let ((key (hnview--translation-unit-cache-key unit)))
+  (let* ((key (hnview--translation-unit-cache-key unit))
+         (buffer (current-buffer))
+         (token hnview--pending-translation-token)
+         (new-pending (not (gethash key hnview--pending-translations))))
     (puthash key t hnview--pending-translations)
-    (force-mode-line-update t)
+    (when new-pending
+      (hnview--record-pending-translation-start buffer token))
     (hnview--translate-text-with-empty-retry
      (plist-get unit :source)
      (lambda (error translation)
-       (remhash key hnview--pending-translations)
-       (force-mode-line-update t)
+       (when new-pending
+         (remhash key hnview--pending-translations)
+         (hnview--record-pending-translation-finish buffer token))
        (when translation
          (puthash key translation hnview--translations)
          (hnview--persist-translation-unit unit translation))
@@ -4817,26 +4827,32 @@ ratio without shrinking below the configured original image ratio."
 
 (defun hnview--enable-translation-mode-line ()
   "Show pending translation state in this buffer's mode line."
+  (setq-local hnview--pending-translation-count 0)
+  (setq-local hnview--pending-translation-token (cons nil nil))
   (setq-local mode-line-process
               '(:eval (hnview--translation-mode-line-status))))
 
+(defun hnview--record-pending-translation-start (buffer token)
+  "Record that BUFFER started one translation unit for TOKEN."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (eq token hnview--pending-translation-token)
+        (cl-incf hnview--pending-translation-count)
+        (force-mode-line-update)))))
+
+(defun hnview--record-pending-translation-finish (buffer token)
+  "Record that one translation unit finished for BUFFER and TOKEN."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (eq token hnview--pending-translation-token)
+        (setq-local hnview--pending-translation-count
+                    (max 0 (1- hnview--pending-translation-count)))
+        (force-mode-line-update)))))
+
 (defun hnview--translation-mode-line-status ()
   "Return mode line text for pending translations in this buffer."
-  (let ((count (hnview--buffer-pending-translation-count)))
-    (when (> count 0)
-      (format " Translating:%d" count))))
-
-(defun hnview--buffer-pending-translation-count ()
-  "Return the number of pending translation segments visible in this buffer."
-  (let ((count 0))
-    (dolist (item (if (and (derived-mode-p 'hnview-article-mode)
-                           hnview--article)
-                      (hnview--article-visible-items)
-                    (hnview--visible-buffer-items)))
-      (dolist (unit (hnview--translation-units item))
-        (when (hnview--translation-unit-pending-p unit)
-          (cl-incf count))))
-    count))
+  (when (> hnview--pending-translation-count 0)
+    (format " Translating:%d" hnview--pending-translation-count)))
 
 (defun hnview-toggle-bookmark ()
   "Toggle bookmark for the item at point."
@@ -5112,11 +5128,11 @@ generation is no longer active."
                  (cl-incf active)
                  (let ((item (pop queue)))
                    (with-current-buffer buffer
-                     (hnview--set-item-translation-hidden item nil))
-                   (hnview--translate-item
-                    item
-                    (lambda (error _translation)
-                      (finish error))))))
+                     (hnview--set-item-translation-hidden item nil)
+                     (hnview--translate-item
+                      item
+                      (lambda (error _translation)
+                        (finish error)))))))
              (when (and queue
                         (< active concurrency))
                (schedule)))))
@@ -5174,7 +5190,10 @@ generation is no longer active."
   (setq-local truncate-lines nil)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
-              (make-hash-table :test #'equal)))
+              (make-hash-table :test #'equal))
+  (visual-line-mode 1)
+  (when (fboundp 'visual-wrap-prefix-mode)
+    (visual-wrap-prefix-mode 1)))
 
 (define-derived-mode hnview-inbox-mode special-mode "hnview-inbox"
   "Major mode for hnview inbox buffers."
