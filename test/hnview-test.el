@@ -2068,6 +2068,69 @@ ioctl(sock, SIOCSIFFLAGS, &ifr);   /* -> page_pool_destroy */
         (should (equal (mapcar (lambda (item) (plist-get item :id)) started)
                        '(2 1)))))))
 
+(ert-deftest hnview-translate-items-coalesces-rerenders ()
+  "Batch translation completions should not rerender after every item."
+  (let ((first '(:id 1 :type "comment" :text "First comment"))
+        (second '(:id 2 :type "comment" :text "Second comment"))
+        scheduled
+        callbacks
+        (renders 0))
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_secs _repeat function &rest args)
+                 (push (lambda () (apply function args)) scheduled)
+                 'timer))
+              ((symbol-function 'hnview--translate-item)
+               (lambda (_item callback)
+                 (push callback callbacks))))
+      (with-temp-buffer
+        (hnview-thread-mode)
+        (hnview--translate-items-with-renderer
+         (list first second) (current-buffer)
+         (lambda (&optional _preserve-state)
+           (cl-incf renders)))
+        (funcall (pop scheduled))
+        (should (= (length callbacks) 2))
+        (funcall (pop callbacks) nil t)
+        (funcall (pop callbacks) nil t)
+        (should (= renders 0))
+        (should (= (length scheduled) 1))
+        (funcall (pop scheduled))
+        (should (= renders 1))))))
+
+(ert-deftest hnview-rerender-current-buffer-preserves-window-start ()
+  "Rerendering comment buffers should keep the visible top item stable."
+  (let* ((first '(:id 1 :type "comment" :by "alice"
+                      :text "First comment body"))
+         (second '(:id 2 :type "comment" :by "bob"
+                       :text "Second comment body"))
+         (third '(:id 3 :type "comment" :by "carol"
+                      :text "Third comment body"))
+         (story (list :id 100 :type "story" :title "Story"
+                      :hnview-children (list first second third)))
+         (hnview--translations (make-hash-table :test #'equal)))
+    (save-window-excursion
+      (with-temp-buffer
+        (switch-to-buffer (current-buffer))
+        (hnview-thread-mode)
+        (setq-local hnview--thread-root story)
+        (setq-local hnview--folded-comments (make-hash-table :test #'eql))
+        (hnview--render-thread)
+        (goto-char (point-min))
+        (search-forward "Second comment body")
+        (beginning-of-line)
+        (set-window-start (selected-window) (point) t)
+        (search-forward "Third comment body")
+        (let ((state (hnview--point-state)))
+          (puthash (hnview--translation-key second "Second comment body" 'text)
+                   "第二条评论正文"
+                   hnview--translations)
+          (hnview--set-item-translation-hidden second nil)
+          (hnview--rerender-current-buffer state))
+        (should (equal (plist-get (hnview--item-at-point) :id) 3))
+        (save-excursion
+          (goto-char (window-start))
+          (should (equal (plist-get (hnview--item-at-point) :id) 2)))))))
+
 (ert-deftest hnview-translate-visible-callback-preserves-current-point ()
   "Visible translation callbacks should preserve the current point."
   (let ((first '(:id 1 :type "story" :title "First"))

@@ -230,13 +230,14 @@ original text; otherwise it shows cached translations and starts missing
 translations asynchronously. Translated text replaces the original text in
 place and keeps the existing story, comment, or article layout where possible:
 metadata, status markers, indentation, and comment hierarchy stay unchanged.
-While translations are
-pending, the original text stays visible and the mode line shows the pending
-translation count. Batch translation is throttled by
-`hnview-translation-concurrency` so `C-c C-v` does not start every visible
-comment at once. Empty translation results are retried according to
-`hnview-translation-empty-retry-count` and are not cached. Successful
-translations are cached in the SQLite database at `hnview-database-file`.
+While translations are pending, the original text stays visible and the mode
+line shows the pending translation count. Comment thread redraws are coalesced
+while batch translations complete so scrolling remains stable. Batch
+translation is throttled by `hnview-translation-concurrency` so `C-c C-v` does
+not start every visible comment at once. Empty translation results are retried
+according to `hnview-translation-empty-retry-count` and are not cached.
+Successful translations are cached in the SQLite database at
+`hnview-database-file`.
 Cached translations do not replace originals by default unless
 `hnview-translate-by-default` is enabled or you toggle translation with
 `C-c C-t`/`C-c C-v`.

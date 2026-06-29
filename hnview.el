@@ -5,6 +5,7 @@
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "29.1") (llm "0.30.1") (plz "0.9"))
 ;; Keywords: news, hypermedia, convenience
+;; Assisted-by: OpenAI Codex (GPT-5)
 
 ;;; Commentary:
 
@@ -3873,15 +3874,28 @@ TARGET-LANGUAGE is passed to `hnview--translate-text'.  RETRIES overrides
 
 (defun hnview--point-state ()
   "Return state for restoring point within the current hnview item."
-  (when-let* ((item (hnview--item-at-point))
-              (id (plist-get item :id)))
-    (let ((line-start (line-beginning-position))
-          (column (current-column)))
-      (save-excursion
-        (hnview--goto-item-id id)
-        (list :item-id id
-              :line-offset (count-lines (line-beginning-position) line-start)
-              :column column)))))
+  (when-let* ((state (hnview--item-position-state)))
+    (if-let* ((window (get-buffer-window (current-buffer) t))
+              (window-state
+               (hnview--item-position-state (window-start window))))
+        (append state (list :window-start-state window-state))
+      state)))
+
+(defun hnview--item-position-state (&optional position)
+  "Return item-relative point state at POSITION or current point."
+  (save-excursion
+    (when position
+      (goto-char position))
+    (when-let* ((item (hnview--item-at-point))
+                (id (plist-get item :id)))
+      (let ((line-start (line-beginning-position))
+            (column (current-column)))
+        (save-excursion
+          (hnview--goto-item-id id)
+          (list :item-id id
+                :line-offset (count-lines (line-beginning-position)
+                                          line-start)
+                :column column))))))
 
 (defun hnview--rerender-current-buffer (&optional preserve-item)
   "Render current hnview buffer.
@@ -3903,6 +3917,15 @@ Otherwise, preserve the current item and relative line and column."
 
 (defun hnview--restore-point-state (state)
   "Restore point from STATE produced by `hnview--point-state'."
+  (hnview--restore-item-position-state state)
+  (when-let* ((window-state (plist-get state :window-start-state))
+              (window (get-buffer-window (current-buffer) t)))
+    (save-excursion
+      (when (hnview--restore-item-position-state window-state)
+        (set-window-start window (point) t)))))
+
+(defun hnview--restore-item-position-state (state)
+  "Restore point from item-relative STATE."
   (let ((id (plist-get state :item-id))
         (line-offset (or (plist-get state :line-offset) 0))
         (column (or (plist-get state :column) 0)))
@@ -3918,7 +3941,8 @@ Otherwise, preserve the current item and relative line and column."
                   (throw 'done nil))
               (goto-char last-good)
               (throw 'done nil))))
-        (move-to-column column)))))
+        (move-to-column column)
+        t))))
 
 (defun hnview--goto-item-id (id)
   "Move point to the first rendered hnview item with ID."
@@ -5101,20 +5125,30 @@ When GENERATION is non-nil, stop scheduling items if that visible translation
 generation is no longer active."
   (let ((queue (copy-sequence items))
         (active 0)
-        (concurrency (max 1 hnview-translation-concurrency)))
+        (concurrency (max 1 hnview-translation-concurrency))
+        (rerender-scheduled nil))
     (cl-labels
         ((schedule ()
            (run-at-time 0.05 nil #'step))
          (active-p ()
            (and (buffer-live-p buffer)
                 (hnview--translation-batch-active-p buffer generation)))
+         (schedule-rerender ()
+           (unless rerender-scheduled
+             (setq rerender-scheduled t)
+             (run-at-time
+              0.05 nil
+              (lambda ()
+                (setq rerender-scheduled nil)
+                (when (active-p)
+                  (with-current-buffer buffer
+                    (funcall rerender-function t)))))))
          (finish (error)
            (when error
              (message "%s" error))
            (setq active (max 0 (1- active)))
            (when (active-p)
-             (with-current-buffer buffer
-               (funcall rerender-function t))
+             (schedule-rerender)
              (when queue
                (schedule))))
          (step ()
