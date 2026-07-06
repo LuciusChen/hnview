@@ -2,7 +2,7 @@
 
 ;; Copyright (C) 2026 Lucius Chen
 
-;; Author: Lucius Chen
+;; Author: Lucius Chen <https://github.com/LuciusChen>
 ;; Assisted-by: OpenAI Codex:gpt-5
 ;; URL: https://github.com/luciuschen/hnview
 ;; Version: 0.1.0
@@ -34,6 +34,7 @@
 (require 'cl-lib)
 (require 'dom)
 (require 'json)
+(require 'plz)
 (require 'shr)
 (require 'sqlite)
 (require 'subr-x)
@@ -43,22 +44,10 @@
 
 (declare-function llm-chat-async "llm")
 (declare-function llm-make-chat-prompt "llm")
-(declare-function libxml-parse-html-region "xml.c"
-                  (start end &optional base-url discard-comments))
-(declare-function plz "plz")
-(declare-function plz-error-curl-error "plz")
-(declare-function plz-error-message "plz")
-(declare-function plz-error-response "plz")
-(declare-function plz-response-body "plz")
-(declare-function plz-response-headers "plz")
-(declare-function plz-response-status "plz")
 (declare-function eww "eww")
-(declare-function evil-emacs-state "evil")
-(declare-function evil-set-initial-state "evil")
 (declare-function treesit-ready-p "treesit" (language &optional quiet))
 (declare-function visual-wrap-prefix-mode "visual-wrap" (&optional arg))
-(defvar plz-curl-default-args)
-(defvar evil-local-mode)
+(defvar shr-image-zoom-levels)
 (defvar treesit-font-lock-level)
 
 (defgroup hnview nil
@@ -266,13 +255,6 @@ This only applies when the source image width is known."
 (defcustom hnview-article-min-text-length 120
   "Minimum text length preferred for readability candidates."
   :type 'natnum
-  :group 'hnview)
-
-(defcustom hnview-use-emacs-state-in-evil t
-  "Whether hnview buffers enter Emacs state when Evil is active.
-This keeps hnview's native single-key commands, including g, t, T, and
-q, available in read-only buffers."
-  :type 'boolean
   :group 'hnview)
 
 (defface hnview-date-main
@@ -520,15 +502,6 @@ q, available in read-only buffers."
     (define-key map (kbd "<backtab>") #'shr-previous-link)
     map)
   "Keymap for `hnview-article-mode'.")
-
-(defun hnview--maybe-enter-emacs-state-in-evil ()
-  "Use Emacs state for hnview buffers when Evil is active."
-  (when hnview-use-emacs-state-in-evil
-    (when (fboundp 'evil-set-initial-state)
-      (evil-set-initial-state major-mode 'emacs))
-    (when (and (bound-and-true-p evil-local-mode)
-               (fboundp 'evil-emacs-state))
-      (evil-emacs-state))))
 
 ;;; State
 
@@ -854,7 +827,6 @@ request body."
 
 (defun hnview--request (method url fields callback)
   "Request METHOD URL with optional form FIELDS, then call CALLBACK."
-  (hnview--ensure-plz)
   (let* ((post-p (eq method 'post))
          (body (when post-p
                  (hnview--encode-form-fields fields)))
@@ -887,16 +859,6 @@ request body."
                     (hnview--store-cookie-jar cookie-jar)
                     (funcall callback (hnview--plz-error-message error) nil))
                 (hnview--delete-cookie-jar cookie-jar))))))
-
-(defun hnview--ensure-plz ()
-  "Ensure `plz' is available."
-  (unless (fboundp 'plz)
-    (condition-case err
-        (unless (require 'plz nil t)
-          (user-error "Plz.el is required for hnview HTTP requests"))
-      (error
-       (user-error "Plz.el could not be loaded: %s"
-                   (error-message-string err))))))
 
 (defun hnview--request-headers (url &optional extra-headers)
   "Return request headers for URL with EXTRA-HEADERS."
@@ -1058,7 +1020,7 @@ request body."
                    collect (format "%s=%s"
                                    (plist-get cookie :name)
                                    (plist-get cookie :value)))))
-    (unless (null pairs)
+    (when pairs
       (string-join pairs "; "))))
 
 (defun hnview--hn-user-cookie-p ()
@@ -2718,7 +2680,7 @@ not outscore narrower article containers."
    ((null node) "")
    ((stringp node) (hnview--readability-collapse-space node))
    ((consp node)
-    (hnview--readability-collapse-space (dom-inner-text node)))
+    (hnview--readability-collapse-space (hnview--dom-text node)))
    (t "")))
 
 (defun hnview--readability-clean-string (text)
@@ -3872,7 +3834,7 @@ TARGET-LANGUAGE is passed to `hnview--translate-text'.  RETRIES overrides
   (or (get-text-property (point) property)
       (save-excursion
         (let ((end (line-end-position)))
-          (goto-char (line-beginning-position))
+          (beginning-of-line)
           (catch 'found
             (while (< (point) end)
               (when-let* ((value (get-text-property (point) property)))
@@ -3963,7 +3925,7 @@ Otherwise, preserve the current item and relative line and column."
   "Move point to the first rendered hnview item with ID."
   (goto-char (point-min))
   (catch 'found
-    (while (< (point) (point-max))
+    (while (not (eobp))
       (when-let* ((item (get-text-property (point) 'hnview-item)))
         (when (equal (plist-get item :id) id)
           (throw 'found t)))
@@ -4577,7 +4539,7 @@ When PRESERVE-STATE is t, preserve the article block around current point."
       (goto-char (point-min))
       (setq restored
             (catch 'found
-              (while (< (point) (point-max))
+              (while (not (eobp))
                 (when-let* ((item (get-text-property
                                    (point) 'hnview-article-item)))
                   (when (equal (hnview--translation-item-key item) key)
@@ -5213,7 +5175,7 @@ generation is no longer active."
         (items nil))
     (save-excursion
       (goto-char (point-min))
-      (while (< (point) (point-max))
+      (while (not (eobp))
         (when-let* ((item (get-text-property (point) 'hnview-item))
                     (id (plist-get item :id)))
           (unless (gethash id seen)
@@ -5225,17 +5187,17 @@ generation is no longer active."
 
 ;;; Modes
 
+;;;###autoload
 (define-derived-mode hnview-feed-mode special-mode "hnview-feed"
   "Major mode for hnview feed buffers."
-  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines t)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
 
+;;;###autoload
 (define-derived-mode hnview-thread-mode special-mode "hnview-thread"
   "Major mode for hnview thread buffers."
-  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines nil)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
@@ -5244,26 +5206,26 @@ generation is no longer active."
   (when (fboundp 'visual-wrap-prefix-mode)
     (visual-wrap-prefix-mode 1)))
 
+;;;###autoload
 (define-derived-mode hnview-inbox-mode special-mode "hnview-inbox"
   "Major mode for hnview inbox buffers."
-  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines nil)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
 
+;;;###autoload
 (define-derived-mode hnview-profile-mode special-mode "hnview-profile"
   "Major mode for hnview profile buffers."
-  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines nil)
   (setq-local mode-name (hnview--profile-mode-name hnview--profile-section))
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
 
+;;;###autoload
 (define-derived-mode hnview-article-mode special-mode "hnview-article"
   "Major mode for reading extracted web articles."
-  (hnview--maybe-enter-emacs-state-in-evil)
   (setq-local truncate-lines nil)
   (setq-local shr-put-image-function #'hnview--article-put-image)
   (hnview--enable-translation-mode-line)
@@ -5271,6 +5233,7 @@ generation is no longer active."
               (make-hash-table :test #'equal))
   (visual-line-mode 1))
 
+;;;###autoload
 (define-derived-mode hnview-reply-mode text-mode "hnview-reply"
   "Major mode for composing Hacker News replies."
   (setq-local require-final-newline nil))

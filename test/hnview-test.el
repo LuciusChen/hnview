@@ -158,37 +158,6 @@
                   #'hnview-article-refresh))
   (should-not (lookup-key hnview-article-mode-map (kbd "t"))))
 
-(ert-deftest hnview-evil-emacs-state-uses-native-keymap ()
-  "Evil users should get hnview's native read-only keymap by default."
-  (let ((hnview-use-emacs-state-in-evil t)
-        (major-mode 'hnview-feed-mode)
-        initial-state
-        called)
-    (cl-progv '(evil-local-mode) '(t)
-      (cl-letf (((symbol-function 'evil-set-initial-state)
-                 (lambda (mode state)
-                   (setq initial-state (cons mode state))))
-                ((symbol-function 'evil-emacs-state)
-                 (lambda () (setq called t))))
-        (hnview--maybe-enter-emacs-state-in-evil)))
-    (should (equal initial-state '(hnview-feed-mode . emacs)))
-    (should called)))
-
-(ert-deftest hnview-evil-emacs-state-can-be-disabled ()
-  "Users should be able to keep Evil state management unchanged."
-  (let ((hnview-use-emacs-state-in-evil nil)
-        (initial-state nil)
-        called)
-    (cl-progv '(evil-local-mode) '(t)
-      (cl-letf (((symbol-function 'evil-set-initial-state)
-                 (lambda (_mode _state)
-                   (setq initial-state t)))
-                ((symbol-function 'evil-emacs-state)
-                 (lambda () (setq called t))))
-        (hnview--maybe-enter-emacs-state-in-evil)))
-    (should-not initial-state)
-    (should-not called)))
-
 (ert-deftest hnview-profile-section-label-reads-simple-alist ()
   "Profile section labels should read simple section pairs."
   (should (equal (hnview--profile-section-label 'about) "About"))
@@ -1100,12 +1069,10 @@ ioctl(sock, SIOCSIFFLAGS, &ifr);   /* -> page_pool_destroy */
                    (setq headers (plist-get args :headers))
                    (funcall
                     (plist-get args :then)
-                    'fake-response)))
-                ((symbol-function 'plz-response-body)
-                 (lambda (_response) "ok"))
-                ((symbol-function 'plz-response-headers)
-                 (lambda (_response)
-                   '((set-cookie . "user=abc; Path=/; Secure; HttpOnly")))))
+                    (make-plz-response
+                     :headers
+                     '((set-cookie . "user=abc; Path=/; Secure; HttpOnly"))
+                     :body "ok")))))
         (hnview--url-text
          "https://news.ycombinator.com/login"
          (lambda (err body)
@@ -1137,11 +1104,7 @@ ioctl(sock, SIOCSIFFLAGS, &ifr);   /* -> page_pool_destroy */
                      (insert "#HttpOnly_news.ycombinator.com\tFALSE\t/\tTRUE\t0\tuser\tabc\n"))
                    (funcall
                     (plist-get args :then)
-                    'fake-response)))
-                ((symbol-function 'plz-response-body)
-                 (lambda (_response) "ok"))
-                ((symbol-function 'plz-response-headers)
-                 (lambda (_response) nil)))
+                    (make-plz-response :headers nil :body "ok")))))
         (hnview--url-text
          "https://news.ycombinator.com/login"
          (lambda (err body)
@@ -1156,30 +1119,11 @@ ioctl(sock, SIOCSIFFLAGS, &ifr);   /* -> page_pool_destroy */
 
 (ert-deftest hnview-plz-error-message-explains-hn-rate-limit ()
   "HTTP 429 should be reported as an HN rate limit."
-  (cl-letf (((symbol-function 'plz-error-message)
-             (lambda (_error) "HTTP 429"))
-            ((symbol-function 'plz-error-response)
-             (lambda (_error) 'response))
-            ((symbol-function 'plz-response-status)
-             (lambda (_response) 429)))
-    (should (equal (hnview--plz-error-message 'error)
+  (let ((error (make-plz-error
+                :message "HTTP 429"
+                :response (make-plz-response :status 429))))
+    (should (equal (hnview--plz-error-message error)
                    "HN rate-limited this request (HTTP 429); wait before trying again"))))
-
-(ert-deftest hnview-ensure-plz-reports-load-errors ()
-  "Missing or broken plz should produce a user-facing error."
-  (let ((original-fboundp (symbol-function 'fboundp))
-        (original-require (symbol-function 'require)))
-    (cl-letf (((symbol-function 'fboundp)
-               (lambda (symbol)
-                 (if (eq symbol 'plz)
-                     nil
-                   (funcall original-fboundp symbol))))
-              ((symbol-function 'require)
-               (lambda (feature &optional filename noerror)
-                 (if (eq feature 'plz)
-                     (error "load failure")
-                   (funcall original-require feature filename noerror)))))
-      (should-error (hnview--ensure-plz) :type 'user-error))))
 
 (ert-deftest hnview-hn-url-builds-query-url ()
   "HN URL helpers should build absolute URLs."
