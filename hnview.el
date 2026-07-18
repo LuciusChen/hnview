@@ -1,4 +1,4 @@
-;;; hnview.el --- Modern translated Hacker News reader -*- lexical-binding: t; -*-
+;;; hnview.el --- Standalone Hacker News client -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 Lucius Chen
 
@@ -24,8 +24,9 @@
 
 ;;; Commentary:
 
-;; hnview is a modern Emacs-native Hacker News reader with optional
-;; LLM-assisted translation through llm.el.
+;; hnview is a standalone Emacs-native Hacker News client with dedicated feed,
+;; thread, profile, inbox, reply, and article-reading interfaces.  It also
+;; provides optional LLM-assisted translation through llm.el.
 
 ;;; Code:
 
@@ -51,7 +52,7 @@
 (defvar treesit-font-lock-level)
 
 (defgroup hnview nil
-  "Modern Hacker News reader with translation."
+  "Standalone Hacker News client for Emacs."
   :group 'applications
   :prefix "hnview-")
 

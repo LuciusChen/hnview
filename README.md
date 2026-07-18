@@ -1,9 +1,10 @@
 # hnview
 
-`hnview` is a modern Emacs-native Hacker News reader with LLM-assisted
-translation. It takes UI cues from Haiker's clean feed layout while staying
-inside Emacs conventions: buffers, faces, keymaps, text properties, and
-keyboard-first navigation.
+`hnview` is a standalone Emacs-native Hacker News client with dedicated feed,
+thread, profile, inbox, reply, and article-reading interfaces. It also provides
+optional LLM-assisted translation. The UI takes cues from Haiker's clean feed
+layout while staying inside Emacs conventions: buffers, faces, keymaps, text
+properties, and keyboard-first navigation.
 
 ## First Version Scope
 
@@ -28,6 +29,23 @@ Not included in the first version:
 
 - Downvoting.
 - Mobile push notifications.
+
+## Why a Separate Client?
+
+Existing Emacs packages cover several related but distinct Hacker News
+workflows. `consult-hn` provides Algolia search, and `dashboard-hackernews`
+adds a small feed section to Emacs Dashboard. `hackernews` and
+`hackernews-modern` focus on feed browsing and hand story and discussion links
+off to a browser. `hnreader` renders discussions in an Org buffer but does not
+support account actions. `nnhackernews` is the closest in overall capability,
+but intentionally presents Hacker News as a Gnus backend.
+
+`hnview` instead owns a standalone set of Emacs-native buffers and workflows.
+Feeds, nested threads, profiles, inbox replies, account actions, bookmarks, and
+extracted article content share one UI and persistence model without requiring
+Gnus or an Org-based reader. Translation is integrated into that client across
+feed titles, story text, comments, articles, and reply drafts; it is not the
+sole reason for the package.
 
 ## Requirements
 
