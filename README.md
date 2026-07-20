@@ -1,5 +1,7 @@
 # hnview
 
+[![MELPA](https://melpa.org/packages/hnview-badge.svg)](https://melpa.org/#/hnview)
+
 `hnview` is a standalone Emacs-native Hacker News client with dedicated feed,
 thread, profile, inbox, reply, and article-reading interfaces. It also provides
 optional LLM-assisted translation. The UI takes cues from Haiker's clean feed
