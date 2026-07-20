@@ -3994,6 +3994,27 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
         (t
          (message "HN login did not complete")))))))
 
+(defun hnview-inbox-refresh ()
+  "Refresh the current hnview inbox buffer."
+  (interactive)
+  (unless (derived-mode-p 'hnview-inbox-mode)
+    (user-error "Not in an hnview inbox buffer"))
+  (setq-local hnview--loading-message "Loading replies...")
+  (setq-local hnview--error-message nil)
+  (setq-local hnview--inbox-replies nil)
+  (hnview--render-inbox)
+  (let ((buffer (current-buffer)))
+    (hnview--fetch-inbox-replies
+     hnview-username hnview-inbox-submission-limit
+     (lambda (error replies)
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (setq-local hnview--loading-message nil)
+           (setq-local hnview--error-message error)
+           (setq-local hnview--inbox-replies replies)
+           (hnview--render-inbox)
+           (hnview--maybe-auto-translate buffer)))))))
+
 ;;;###autoload
 (defun hnview-inbox (&optional username)
   "Open the reply inbox for USERNAME."
@@ -4008,20 +4029,7 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
       (switch-to-buffer buffer)
       (hnview-inbox-mode)
       (setq-local hnview-username name)
-      (setq-local hnview--loading-message "Loading replies...")
-      (setq-local hnview--error-message nil)
-      (setq-local hnview--inbox-replies nil)
-      (hnview--render-inbox)
-      (hnview--fetch-inbox-replies
-       name hnview-inbox-submission-limit
-       (lambda (error replies)
-         (when (buffer-live-p buffer)
-           (with-current-buffer buffer
-             (setq-local hnview--loading-message nil)
-             (setq-local hnview--error-message error)
-             (setq-local hnview--inbox-replies replies)
-             (hnview--render-inbox)
-             (hnview--maybe-auto-translate buffer))))))))
+      (hnview-inbox-refresh))))
 
 ;;;###autoload
 (defun hnview-profile (&optional username section)
@@ -4227,6 +4235,10 @@ stored by hnview; HN cookies are stored in the hnview SQLite database."
       (hnview--open-thread story limit)))
    ((derived-mode-p 'hnview-profile-mode)
     (hnview--open-profile hnview--profile-username hnview--profile-section))
+   ((derived-mode-p 'hnview-inbox-mode)
+    (hnview-inbox-refresh))
+   ((derived-mode-p 'hnview-article-mode)
+    (hnview-article-refresh))
    (t (user-error "Not in an hnview buffer"))))
 
 (defun hnview-open-thread ()
@@ -5189,12 +5201,19 @@ generation is no longer active."
                        (point-max)))))
     (nreverse items)))
 
+(defun hnview--revert-buffer (_ignore-auto _noconfirm)
+  "Refresh the Hacker News view buffer.
+Called as a `revert-buffer-function'; IGNORE-AUTO and NOCONFIRM are
+accepted for compatibility but ignored."
+  (hnview-refresh))
+
 ;;; Modes
 
 ;;;###autoload
 (define-derived-mode hnview-feed-mode special-mode "hnview-feed"
   "Major mode for hnview feed buffers."
   (setq-local truncate-lines t)
+  (setq-local revert-buffer-function #'hnview--revert-buffer)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
@@ -5203,6 +5222,7 @@ generation is no longer active."
 (define-derived-mode hnview-thread-mode special-mode "hnview-thread"
   "Major mode for hnview thread buffers."
   (setq-local truncate-lines nil)
+  (setq-local revert-buffer-function #'hnview--revert-buffer)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal))
@@ -5214,6 +5234,7 @@ generation is no longer active."
 (define-derived-mode hnview-inbox-mode special-mode "hnview-inbox"
   "Major mode for hnview inbox buffers."
   (setq-local truncate-lines nil)
+  (setq-local revert-buffer-function #'hnview--revert-buffer)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
               (make-hash-table :test #'equal)))
@@ -5222,6 +5243,7 @@ generation is no longer active."
 (define-derived-mode hnview-profile-mode special-mode "hnview-profile"
   "Major mode for hnview profile buffers."
   (setq-local truncate-lines nil)
+  (setq-local revert-buffer-function #'hnview--revert-buffer)
   (setq-local mode-name (hnview--profile-mode-name hnview--profile-section))
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
@@ -5231,6 +5253,7 @@ generation is no longer active."
 (define-derived-mode hnview-article-mode special-mode "hnview-article"
   "Major mode for reading extracted web articles."
   (setq-local truncate-lines nil)
+  (setq-local revert-buffer-function #'hnview--revert-buffer)
   (setq-local shr-put-image-function #'hnview--article-put-image)
   (hnview--enable-translation-mode-line)
   (setq-local hnview--hidden-translations
