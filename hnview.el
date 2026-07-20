@@ -3753,7 +3753,8 @@ TARGET-LANGUAGE is passed to `hnview--translate-text'.  RETRIES overrides
          (children (plist-get comment :hnview-children))
          (folded (and children hnview--folded-comments
                       (gethash id hnview--folded-comments)))
-         (indent (* depth 2)))
+         (indent (* depth 2))
+         (start (point)))
     (insert (make-string indent ?\s))
     (hnview--insert-comment-fold-control comment folded)
     (insert " ")
@@ -3764,7 +3765,9 @@ TARGET-LANGUAGE is passed to `hnview--translate-text'.  RETRIES overrides
        (when folded
          (hnview--comment-descendant-count comment)))
       (unless folded
-        (hnview--insert-comment-text comment text-indent)
+        (hnview--insert-comment-text comment text-indent))
+      (add-text-properties start (point) `(hnview-item ,comment))
+      (unless folded
         (dolist (child children)
           (hnview--insert-comment child (1+ depth)))))))
 

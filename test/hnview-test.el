@@ -106,6 +106,24 @@
     (when (fboundp 'visual-wrap-prefix-mode)
       (should (bound-and-true-p visual-wrap-prefix-mode)))))
 
+(ert-deftest hnview-thread-item-navigation-skips-comment-boundaries ()
+  "Thread item navigation should jump between comments."
+  (let* ((first '(:id 1 :type "comment" :by "alice" :text "First body"))
+         (second '(:id 2 :type "comment" :by "bob" :text "Second body"))
+         (story (list :id 100 :type "story" :title "Story"
+                      :hnview-children (list first second))))
+    (with-temp-buffer
+      (hnview-thread-mode)
+      (setq-local hnview--thread-root story)
+      (hnview--render-thread)
+      (goto-char (point-min))
+      (search-forward "alice")
+      (beginning-of-line)
+      (hnview-next-item)
+      (should (equal (plist-get (hnview--item-at-point) :id) 2))
+      (hnview-previous-item)
+      (should (equal (plist-get (hnview--item-at-point) :id) 1)))))
+
 (ert-deftest hnview-inbox-mode-has-navigation-keys ()
   "Inbox buffers should expose navigation and refresh commands."
   (should (eq (lookup-key hnview-inbox-mode-map (kbd "C-c C-l"))
